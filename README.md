@@ -1457,6 +1457,30 @@ instead of a display, which is how the console renderer is tested.
   unavailable, and offers @mentions from the members it has seen.
 - Open a **feature request** issue for anything you want that is not here yet.
 
+## Security
+
+The client holds a login token and talks to the network, so two checks
+run on GitHub from `.github/workflows/security.yml`:
+
+- **Dependency advisories.** `cargo audit` reads `Cargo.lock` against the
+  [RustSec](https://rustsec.org) database, on every push and pull request
+  that touches the sources, `Cargo.toml` or `Cargo.lock`, and again every
+  Monday, since an advisory can be published against a crate that has not
+  changed here in months. A vulnerability fails the run. Unmaintained,
+  unsound and yanked crates are listed without failing it: several of them
+  are reached through `ratatui` and `image` and cannot be upgraded from
+  here.
+- **CodeQL** reads the sources and files what it finds under the
+  repository's Security tab.
+
+Both also run on demand from the Actions tab. To audit a checkout
+yourself:
+
+```bash
+cargo install cargo-audit --locked
+cargo audit
+```
+
 ## License
 
 Copyright (C) 2026 polonius-dev and the fluxter contributors.
