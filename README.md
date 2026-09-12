@@ -351,6 +351,14 @@ Default path (unless you pass `--config`): **`…/fluxer-tui/config.toml`** unde
 
 It stores `api_base_url`, `token`, `last_server_id`, and `last_channel_id` so the client can restore your last place, plus the `[ui]`, `[media]` and `[console]` settings described below.
 
+`api_base_url` is always read as an `https://` address. A bare host gets the
+scheme put in front of it (`api.fluxer.app/v1` becomes
+`https://api.fluxer.app/v1`), and an `http://` one stops the client at start
+with a message naming the key instead of being quietly upgraded to something
+you did not write: the login token goes out in the headers of every request,
+and a plaintext address would put it on the wire for anyone on the path to
+read. `--api-base-url` on the command line is read the same way.
+
 ## Pictures in chat
 
 On a terminal that can draw pictures (sixel, kitty, iTerm2) and on the
