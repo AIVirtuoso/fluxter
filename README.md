@@ -614,8 +614,11 @@ and their length.
 ## Recording a voice message
 
 **Ctrl+R** starts recording, **Ctrl+R** again sends it, **Esc** throws it
-away. While it runs, the status bar shows `recording 0:07` with both keys
-beside it, whichever box has the focus.
+away, whichever box has the focus.
+While it records, the Input box's title turns red and shows a blinking dot,
+`REC`, the time recorded so far and the two keys that end it, and the status
+bar carries the same in red; both tick once a second. The dot is a plain
+`●`, which the Linux console's fonts have, so it shows there as well.
 
 The client does not touch the microphone itself. It starts a program and
 reads the file that program writes, the same division as playing audio and
