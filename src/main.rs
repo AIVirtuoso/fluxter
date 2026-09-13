@@ -3073,6 +3073,24 @@ fn handle_key_event(
         {
             copy_selected_message(app);
         }
+        // Alt+R = find a member of this community. Above the plain r
+        // below, which has no modifier guard and would take it whenever a
+        // message is selected.
+        KeyCode::Char('r') | KeyCode::Char('R')
+            if key.modifiers.contains(KeyModifiers::ALT)
+                && matches!(
+                    app.focus,
+                    Focus::Servers | Focus::Channels | Focus::Messages
+                ) =>
+        {
+            match app.open_member_search() {
+                Some(true) => {}
+                Some(false) => app.set_status(
+                    "Finding members needs one of the moderator permissions in this community.",
+                ),
+                None => app.set_status("Open a community first."),
+            }
+        }
         // r = reply mode
         KeyCode::Char('r')
             if app.focus == Focus::Messages && app.selected_message_index.is_some() =>
@@ -3097,22 +3115,6 @@ fn handle_key_event(
         {
             if let Some((user_id, guild_id)) = app.open_profile_of_selected() {
                 spawn_profile_load(client.clone(), event_tx.clone(), user_id, guild_id);
-            }
-        }
-        // Alt+R = find a member of this community
-        KeyCode::Char('r') | KeyCode::Char('R')
-            if key.modifiers.contains(KeyModifiers::ALT)
-                && matches!(
-                    app.focus,
-                    Focus::Servers | Focus::Channels | Focus::Messages
-                ) =>
-        {
-            match app.open_member_search() {
-                Some(true) => {}
-                Some(false) => app.set_status(
-                    "Finding members needs one of the moderator permissions in this community.",
-                ),
-                None => app.set_status("Open a community first."),
             }
         }
         // R = refresh
@@ -5985,15 +5987,22 @@ mod key_tests {
     }
 }
 
-/// Alt+R has to sit above the unguarded `R` that refreshes, or it never
-/// runs: rustc only warns about an unreachable arm when the one above it
-/// matches every value of the same key, which this one does.
+/// Alt+R has to sit above the plain `r` (reply) and `R` (refresh) arms,
+/// neither of which checks the modifiers, or it never runs while their
+/// guards hold: rustc only warns about an unreachable arm when the one
+/// above it matches every value of the same key, which these do not.
 #[cfg(test)]
 mod member_search_key_tests {
     use super::*;
-    use crate::api::types::{GuildResponse, UserPrivateResponse};
+    use crate::api::types::{
+        CHANNEL_GUILD_TEXT, ChannelResponse, GuildResponse, MessageResponse, UserPartialResponse,
+        UserPrivateResponse,
+    };
     use crate::app::ServerSelection;
 
+    /// A community with a channel open and one message in it, selected:
+    /// the state in which the plain r (reply) arm matches, which is when
+    /// an Alt+R arm placed below it would never run.
     fn harness(permissions: u64) -> (App, FluxerHttpClient, AppConfig) {
         let me = UserPrivateResponse {
             id: "me".into(),
@@ -6006,16 +6015,38 @@ mod member_search_key_tests {
             permissions: Some(permissions.to_string()),
             ..Default::default()
         };
-        let app = App::new(
+        let channel = ChannelResponse {
+            id: "c".into(),
+            kind: CHANNEL_GUILD_TEXT,
+            name: "general".into(),
+            guild_id: Some("g".into()),
+            ..Default::default()
+        };
+        let mut app = App::new(
             Default::default(),
             me,
             None,
             vec![guild],
             Vec::new(),
             ServerSelection::Guild("g".into()),
-            None,
+            Some("c".into()),
             Default::default(),
         );
+        app.set_guild_channels("g", vec![channel]);
+        app.upsert_message(MessageResponse {
+            id: "1".into(),
+            channel_id: "c".into(),
+            author: UserPartialResponse {
+                id: "bob".into(),
+                username: "bob".into(),
+                ..Default::default()
+            },
+            content: "hello".into(),
+            timestamp: "2026-09-13T10:00:00.000Z".into(),
+            ..Default::default()
+        });
+        app.focus = Focus::Messages;
+        app.selected_message_index = Some(0);
         (
             app,
             FluxerHttpClient::new("https://example.invalid").unwrap(),
@@ -6026,7 +6057,6 @@ mod member_search_key_tests {
     #[test]
     fn alt_r_finds_members_and_plain_r_still_refreshes() {
         let (mut app, client, mut config) = harness(crate::permissions::KICK_MEMBERS);
-        app.focus = Focus::Messages;
         let (event_tx, _events) = tokio::sync::mpsc::unbounded_channel();
         let (gateway_tx, _commands) = tokio::sync::mpsc::unbounded_channel();
         let path = std::path::PathBuf::from("/nonexistent/config.toml");
