@@ -2545,27 +2545,43 @@ fn handle_key_event(
             }
             return;
         }
-        // typing takes the keys while the footer is asking for a value
-        if let Some(input) = app.profile_edit.as_ref().and_then(|v| v.input.clone()) {
+        // a row's value is in the compose box: Enter saves it, Esc gives
+        // the box back as it was, and every other key is the box's own,
+        // paste, cursor, selection and undo included. A popup (emoji,
+        // mention) keeps Enter and Esc for itself while it is open.
+        if app.profile_field_editing().is_some() {
+            let popup = app.emoji_autocomplete.is_some() || app.mention_autocomplete.is_some();
             match key.code {
-                KeyCode::Esc => app.profile_edit_back(),
-                KeyCode::Enter => run_profile_edit_input(app, client, event_tx, input),
-                KeyCode::Backspace => {
-                    if let Some(view) = app.profile_edit.as_mut()
-                        && let Some(input) = view.input.as_mut()
-                    {
-                        input.text_mut().pop();
+                KeyCode::Enter
+                    if !popup
+                        && !key
+                            .modifiers
+                            .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL) =>
+                {
+                    if let Some((row, value)) = app.end_profile_field() {
+                        run_profile_edit_input(app, client, event_tx, row, value);
                     }
                 }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    if let Some(view) = app.profile_edit.as_mut()
-                        && let Some(input) = view.input.as_mut()
-                        && input.text().chars().count() < 320
-                    {
-                        input.text_mut().push(c);
+                KeyCode::Esc if !popup && app.input_selection().is_none() && !app.input_mark => {
+                    app.end_profile_field();
+                    app.set_status("Kept as it was.");
+                }
+                _ => {
+                    let kind = compose_edit_kind(&key);
+                    match kind {
+                        Some(k) => app.input_record(k),
+                        None => app.input_break_undo_group(),
+                    }
+                    handle_input_focus_key(app, key, client, event_tx);
+                    if kind.is_some() {
+                        app.input_forget_noop_record();
+                    }
+                    // Up on the first line would leave the box; the row is
+                    // still being typed, so the box keeps the cursor
+                    if app.profile_field_editing().is_some() {
+                        app.focus = Focus::Input;
                     }
                 }
-                _ => {}
             }
             return;
         }
@@ -4541,18 +4557,17 @@ fn run_voice_action(
 
 /// Enter on the footer's text: what it does depends on what was asked
 /// for.
-/// Enter on a profile row: the text ones open the footer, the reply
-/// preference cycles on the spot.
+/// Enter on a profile row: the text ones put their value in the compose
+/// box, the reply preference cycles on the spot.
 fn start_profile_edit_row(
     app: &mut App,
     client: &FluxerHttpClient,
     event_tx: &UnboundedSender<AppEvent>,
 ) {
-    use crate::app::{ProfileEditInput, ProfileEditRow};
+    use crate::app::ProfileEditRow;
     let Some(row) = app.profile_edit_selected_row() else {
         return;
     };
-    let current = app.profile_edit_value(row);
     match row {
         ProfileEditRow::ReplyMentions => {
             let flags = app.next_reply_mention_flag();
@@ -4572,30 +4587,11 @@ fn start_profile_edit_row(
                 "Saved.",
             );
         }
-        ProfileEditRow::Picture => {
-            if let Some(view) = app.profile_edit.as_mut() {
-                view.input = Some(ProfileEditInput::PicturePath(String::new()));
-            }
-        }
-        ProfileEditRow::DisplayName => {
-            if let Some(view) = app.profile_edit.as_mut() {
-                view.input = Some(ProfileEditInput::DisplayName(current));
-            }
-        }
-        ProfileEditRow::Bio => {
-            if let Some(view) = app.profile_edit.as_mut() {
-                view.input = Some(ProfileEditInput::Bio(current));
-            }
-        }
-        ProfileEditRow::Pronouns => {
-            if let Some(view) = app.profile_edit.as_mut() {
-                view.input = Some(ProfileEditInput::Pronouns(current));
-            }
-        }
-        ProfileEditRow::AccentColour => {
-            if let Some(view) = app.profile_edit.as_mut() {
-                view.input = Some(ProfileEditInput::AccentColour(current));
-            }
+        // a path is typed afresh; the others start from what is stored
+        ProfileEditRow::Picture => app.begin_profile_field(row, String::new()),
+        _ => {
+            let current = app.profile_edit_value(row);
+            app.begin_profile_field(row, current);
         }
     }
 }
@@ -4643,42 +4639,44 @@ fn clear_profile_edit_row(
     spawn_modify_me(client.clone(), event_tx.clone(), body, "Cleared.");
 }
 
-/// Enter on the profile editor's footer, once the value is typed.
+/// Enter in the compose box while it holds a profile row: what was typed,
+/// checked against the server's limits, goes as the row's new value; an
+/// emptied row is cleared.
 fn run_profile_edit_input(
     app: &mut App,
     client: &FluxerHttpClient,
     event_tx: &UnboundedSender<AppEvent>,
-    input: crate::app::ProfileEditInput,
+    row: crate::app::ProfileEditRow,
+    text: String,
 ) {
     use crate::api::types::ModifyCurrentUserRequest;
-    use crate::app::ProfileEditInput;
-    if let Some(view) = app.profile_edit.as_mut() {
-        view.input = None;
+    use crate::app::ProfileEditRow;
+    let text = text.trim().to_string();
+    if let Some(max) = row.max_chars()
+        && text.chars().count() > max
+    {
+        app.set_status(format!(
+            "{} takes at most {max} characters; that is {}.",
+            row.label(),
+            text.chars().count()
+        ));
+        return;
     }
-    let body = match input {
-        ProfileEditInput::DisplayName(text) => {
-            let text = text.trim().to_string();
-            ModifyCurrentUserRequest {
-                global_name: Some((!text.is_empty()).then_some(text)),
-                ..Default::default()
-            }
-        }
-        ProfileEditInput::Bio(text) => {
-            let text = text.trim().to_string();
-            ModifyCurrentUserRequest {
-                bio: Some((!text.is_empty()).then_some(text)),
-                ..Default::default()
-            }
-        }
-        ProfileEditInput::Pronouns(text) => {
-            let text = text.trim().to_string();
-            ModifyCurrentUserRequest {
-                pronouns: Some((!text.is_empty()).then_some(text)),
-                ..Default::default()
-            }
-        }
-        ProfileEditInput::AccentColour(text) => {
-            let text = text.trim().to_string();
+    let cleared = (!text.is_empty()).then_some(text.clone());
+    let body = match row {
+        ProfileEditRow::DisplayName => ModifyCurrentUserRequest {
+            global_name: Some(cleared),
+            ..Default::default()
+        },
+        ProfileEditRow::Bio => ModifyCurrentUserRequest {
+            bio: Some(cleared),
+            ..Default::default()
+        },
+        ProfileEditRow::Pronouns => ModifyCurrentUserRequest {
+            pronouns: Some(cleared),
+            ..Default::default()
+        },
+        ProfileEditRow::AccentColour => {
             if text.is_empty() {
                 ModifyCurrentUserRequest {
                     accent_color: Some(None),
@@ -4695,8 +4693,12 @@ fn run_profile_edit_input(
                 }
             }
         }
-        ProfileEditInput::PicturePath(text) => {
-            let path = crate::media::expand_home(text.trim());
+        ProfileEditRow::Picture => {
+            if text.is_empty() {
+                app.set_status("Kept as it was.");
+                return;
+            }
+            let path = crate::media::expand_home(&text);
             match std::fs::read(&path) {
                 Ok(bytes) if bytes.is_empty() => {
                     app.set_status("That file is empty.");
@@ -4716,6 +4718,7 @@ fn run_profile_edit_input(
                 }
             }
         }
+        ProfileEditRow::ReplyMentions => return,
     };
     app.set_status("Saving…");
     spawn_modify_me(client.clone(), event_tx.clone(), body, "Saved.");
@@ -8453,6 +8456,37 @@ mod profile_edit_key_tests {
         press(&mut h, KeyCode::Char('e'), KeyModifiers::NONE);
         assert!(h.app.profile_edit.is_none());
         assert!(h.app.reaction_target.is_some());
+    }
+
+    /// Enter on a text row puts its value in the compose box, where the
+    /// box's own keys work -- Alt+V pastes the cut buffer, which is what a
+    /// footer of its own could not do -- and Esc gives the box back with
+    /// the draft it held.
+    #[test]
+    fn a_row_is_typed_in_the_compose_box_and_esc_gives_it_back() {
+        let mut h = harness();
+        h.app.set_input("half a message");
+        press(&mut h, KeyCode::Char('e'), KeyModifiers::ALT);
+        press(&mut h, KeyCode::Down, KeyModifiers::NONE);
+        press(&mut h, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(h.app.profile_field_editing(), Some(ProfileEditRow::Bio));
+        assert_eq!(h.app.focus, Focus::Input);
+        assert_eq!(h.app.input_text(), "counting");
+        press(&mut h, KeyCode::Char(' '), KeyModifiers::NONE);
+        h.app.cut_buffer = "sheep".to_string();
+        press(&mut h, KeyCode::Char('v'), KeyModifiers::ALT);
+        assert_eq!(h.app.input_text(), "counting sheep");
+        // the overlay is still open, and the editor's own keys are not
+        // taken from the box: j is a letter here, not a cursor move
+        press(&mut h, KeyCode::Char('j'), KeyModifiers::NONE);
+        assert_eq!(h.app.input_text(), "counting sheepj");
+        assert_eq!(h.app.profile_edit_selected_row(), Some(ProfileEditRow::Bio));
+        press(&mut h, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(h.app.profile_field_editing(), None);
+        assert!(h.app.profile_edit.is_some());
+        assert_eq!(h.app.input_text(), "half a message");
+        assert_eq!(h.app.focus, Focus::Messages);
+        assert_eq!(h.app.me.bio.as_deref(), Some("counting"));
     }
 
     /// x asks; anything but Enter keeps the row as it was.
