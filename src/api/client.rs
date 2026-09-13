@@ -152,6 +152,17 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// Change the account's own profile. Only the fields that need no
+    /// sudo proof are sent from here; a username, a password or an email
+    /// change would need one, and this client holds neither.
+    pub async fn modify_current_user(
+        &self,
+        body: &crate::api::types::ModifyCurrentUserRequest,
+    ) -> Result<UserPrivateResponse> {
+        self.send_json(Method::PATCH, "/users/@me", None::<&()>, Some(body), false)
+            .await
+    }
+
     pub async fn current_user_settings(&self) -> Result<UserSettingsResponse> {
         self.send_json::<(), (), UserSettingsResponse>(
             Method::GET,

@@ -1013,6 +1013,36 @@ An invite made with **+** is a day long with no limit on uses, which is
 what the server itself defaults to, and its link goes on the clipboard as
 soon as it exists.
 
+## Your own profile
+
+**Alt+E** opens it: the things about yourself that can be changed without
+the server asking for your password.
+
+| Row | What it takes |
+| --- | ------------- |
+| **Display name** | The name shown instead of your username, up to 32 characters. **x** clears it and your username shows again. |
+| **About you** | The biography on your profile, up to 320 characters (the instance may allow fewer). |
+| **Pronouns** | Up to 40 characters. |
+| **Accent colour** | Six hex digits, `#3498db` or `3498db` or `0x3498db`. The row is drawn in the colour itself. |
+| **Picture** | A path to an image file, `~` understood. The client reads it, turns it into the data URI the API wants, and sends it; **x** clears your picture. |
+| **When somebody replies to you** | **Enter** cycles the three the server offers: whatever they choose, mention me by default, do not mention me by default. |
+
+Everything is saved as soon as you press **Enter**, and the gateway's
+`USER_UPDATE` brings the change back to every client you have open.
+
+**Your online status and the line under your name are slash commands**, not
+rows here: `/status online|idle|dnd|invisible` and `/customstatus <text>`
+(alone to clear it).
+
+### What needs a password, and so is not here
+
+Changing your **username**, your **discriminator**, your **email** or your
+**password** needs the server's *sudo mode*: the account password or a
+second factor, proved on the request. This client logs in by desktop
+handoff and never holds your password, so it does not ask for one; those
+four live in the web client. A **banner** is missing for a different
+reason -- the server gates every profile banner behind premium.
+
 ## Message formatting
 
 Messages are drawn with the markup Fluxer's own parser understands, so
@@ -1236,6 +1266,7 @@ close. The profile of a selected message's author is on **u** now.
 | **U**                   | Jump to the **new messages** line (see "The new messages line").                                                                                                                                                                                        |
 | **Alt+M**               | **Member list** of the open channel, in a column beside the messages (see "The member list"). **Alt+J** / **Alt+K** scroll it. Closes itself in a direct message; not drawn below 80 columns.                                                            |
 
+| **Alt+E**               | **Your own profile**: display name, about you, pronouns, accent colour, picture, and what happens when somebody replies to you (see "Your own profile").                                                        |
 | **Alt+F**               | **Friends**: friends, the requests both ways, and the accounts you have blocked (see "Friends and blocking"). **←** / **→** switch group, **+** adds by tag, **Esc** closes.                                                                             |
 
 | **Alt+P**               | **Pinned messages** of the open channel, newest pin first. **↑** / **↓** move, **Enter** jumps to one, **x** unpins it, **R** reloads, **Esc** / **q** close. Opening the list marks the channel's pins seen.                                            |

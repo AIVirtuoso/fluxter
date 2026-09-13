@@ -20,6 +20,7 @@ pub mod message_pane;
 pub mod pings_overlay;
 pub mod pins_overlay;
 pub mod presence;
+pub mod profile_edit;
 pub mod profile_overlay;
 pub mod reaction_users_overlay;
 pub mod saved_overlay;
@@ -144,6 +145,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         reaction_users_overlay::render(frame, area, app);
     } else if app.message_actions.is_some() {
         message_actions::render(frame, area, app);
+    } else if app.profile_edit.is_some() {
+        profile_edit::render(frame, area, app);
     } else if app.search.is_some() {
         search_overlay::render(frame, area, app);
     } else if app.conversation.is_some() {

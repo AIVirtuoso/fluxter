@@ -243,6 +243,40 @@ pub struct UserPrivateResponse {
     pub verified: bool,
     #[serde(default)]
     pub email: Option<String>,
+    /// The profile biography, pronouns and accent colour: part of the
+    /// account object, not only of the profile endpoint.
+    #[serde(default)]
+    pub bio: Option<String>,
+    #[serde(default)]
+    pub pronouns: Option<String>,
+    #[serde(default)]
+    pub accent_color: Option<u32>,
+    /// What happens by default when somebody replies to this account:
+    /// 0 no preference, 1 mention, 2 no mention.
+    #[serde(default)]
+    pub mention_flags: Option<i32>,
+    /// Whether any authenticator is configured on the account.
+    #[serde(default)]
+    pub mfa_enabled: bool,
+}
+
+/// The body of `PATCH /users/@me`, with the fields that need no sudo
+/// proof. `Some(None)` is the explicit null that clears one.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ModifyCurrentUserRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub global_name: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bio: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pronouns: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accent_color: Option<Option<u32>>,
+    /// A `data:<mime>;base64,<payload>` string, or null to clear it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mention_flags: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Hash)]

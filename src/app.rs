@@ -1236,6 +1236,103 @@ pub struct MessageActionsView {
     pub selected: usize,
 }
 
+/// Your own profile, as a list of the things that can be changed without
+/// the server's sudo mode: Alt+E.
+#[derive(Debug)]
+pub struct ProfileEditView {
+    pub selected: usize,
+    pub input: Option<ProfileEditInput>,
+}
+
+/// One row of the profile editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileEditRow {
+    DisplayName,
+    Bio,
+    Pronouns,
+    AccentColour,
+    Picture,
+    ReplyMentions,
+}
+
+pub const PROFILE_EDIT_ROWS: [ProfileEditRow; 6] = [
+    ProfileEditRow::DisplayName,
+    ProfileEditRow::Bio,
+    ProfileEditRow::Pronouns,
+    ProfileEditRow::AccentColour,
+    ProfileEditRow::Picture,
+    ProfileEditRow::ReplyMentions,
+];
+
+impl ProfileEditRow {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DisplayName => "Display name",
+            Self::Bio => "About you",
+            Self::Pronouns => "Pronouns",
+            Self::AccentColour => "Accent colour",
+            Self::Picture => "Picture",
+            Self::ReplyMentions => "When somebody replies to you",
+        }
+    }
+
+    /// Whether x clears the row. The reply preference has no empty state,
+    /// and a picture is cleared rather than emptied.
+    pub fn clearable(self) -> bool {
+        !matches!(self, Self::ReplyMentions)
+    }
+}
+
+/// What the editor's footer is asking for.
+#[derive(Debug, Clone)]
+pub enum ProfileEditInput {
+    DisplayName(String),
+    Bio(String),
+    Pronouns(String),
+    AccentColour(String),
+    PicturePath(String),
+}
+
+impl ProfileEditInput {
+    pub fn text(&self) -> &str {
+        match self {
+            Self::DisplayName(t)
+            | Self::Bio(t)
+            | Self::Pronouns(t)
+            | Self::AccentColour(t)
+            | Self::PicturePath(t) => t,
+        }
+    }
+
+    pub fn text_mut(&mut self) -> &mut String {
+        match self {
+            Self::DisplayName(t)
+            | Self::Bio(t)
+            | Self::Pronouns(t)
+            | Self::AccentColour(t)
+            | Self::PicturePath(t) => t,
+        }
+    }
+
+    pub fn prompt(&self) -> &'static str {
+        match self {
+            Self::DisplayName(_) => "Display name (empty clears it)",
+            Self::Bio(_) => "About you (empty clears it)",
+            Self::Pronouns(_) => "Pronouns (empty clears it)",
+            Self::AccentColour(_) => "Colour as #rrggbb (empty clears it)",
+            Self::PicturePath(_) => "Path to a picture",
+        }
+    }
+}
+
+/// The reply preferences in the order the row cycles them, with the
+/// wording each gets.
+pub const REPLY_MENTION_CHOICES: [(i32, &str); 3] = [
+    (0, "whatever they choose"),
+    (1, "mention me by default"),
+    (2, "do not mention me by default"),
+];
+
 /// The categories `POST /reports/message` takes, with the wording the web
 /// client puts on them.
 pub const REPORT_CATEGORIES: [(&str, &str); 12] = [
@@ -1639,6 +1736,8 @@ pub struct App {
     pub relationships_version: u64,
     /// The message actions menu while it is open.
     pub message_actions: Option<MessageActionsView>,
+    /// Your own profile, while it is being edited.
+    pub profile_edit: Option<ProfileEditView>,
     /// The pinned-messages overlay while it is open.
     pub pins: Option<PinsView>,
     /// The bookmarked-messages overlay while it is open.
@@ -1894,6 +1993,7 @@ impl App {
             relationships: HashMap::new(),
             relationships_version: 0,
             message_actions: None,
+            profile_edit: None,
             pins: None,
             saved: None,
             reaction_users: None,
@@ -6115,6 +6215,77 @@ impl App {
         out
     }
 
+    // Alt+E: your own profile
+
+    pub fn open_profile_edit(&mut self) {
+        self.close_overlays();
+        self.profile_edit = Some(ProfileEditView {
+            selected: 0,
+            input: None,
+        });
+    }
+
+    /// Esc: out of the typing first, then out of the overlay.
+    pub fn profile_edit_back(&mut self) {
+        let Some(view) = &mut self.profile_edit else {
+            return;
+        };
+        if view.input.is_some() {
+            view.input = None;
+        } else {
+            self.profile_edit = None;
+        }
+    }
+
+    pub fn profile_edit_move(&mut self, delta: isize) {
+        let count = PROFILE_EDIT_ROWS.len();
+        if let Some(view) = &mut self.profile_edit {
+            view.selected = (view.selected as isize + delta).clamp(0, count as isize - 1) as usize;
+        }
+    }
+
+    pub fn profile_edit_selected_row(&self) -> Option<ProfileEditRow> {
+        let view = self.profile_edit.as_ref()?;
+        PROFILE_EDIT_ROWS.get(view.selected).copied()
+    }
+
+    /// What a row holds now, for the list and for the editor to start from.
+    pub fn profile_edit_value(&self, row: ProfileEditRow) -> String {
+        match row {
+            ProfileEditRow::DisplayName => self.me.global_name.clone().unwrap_or_default(),
+            ProfileEditRow::Bio => self.me.bio.clone().unwrap_or_default(),
+            ProfileEditRow::Pronouns => self.me.pronouns.clone().unwrap_or_default(),
+            ProfileEditRow::AccentColour => self
+                .me
+                .accent_color
+                .map(|c| format!("#{c:06x}"))
+                .unwrap_or_default(),
+            ProfileEditRow::Picture => match self.me.avatar.as_deref() {
+                Some(hash) if !hash.is_empty() => "set".to_string(),
+                _ => String::new(),
+            },
+            ProfileEditRow::ReplyMentions => {
+                let flags = self.me.mention_flags.unwrap_or(0);
+                REPLY_MENTION_CHOICES
+                    .iter()
+                    .find(|(value, _)| *value == flags)
+                    .map(|(_, label)| (*label).to_string())
+                    .unwrap_or_else(|| "whatever they choose".to_string())
+            }
+        }
+    }
+
+    /// The next reply preference in the cycle, which is what Enter does on
+    /// that row.
+    pub fn next_reply_mention_flag(&self) -> i32 {
+        let current = self.me.mention_flags.unwrap_or(0);
+        let index = REPLY_MENTION_CHOICES
+            .iter()
+            .position(|(value, _)| *value == current)
+            .unwrap_or(0);
+        REPLY_MENTION_CHOICES[(index + 1) % REPLY_MENTION_CHOICES.len()].0
+    }
+
     pub fn open_message_actions(&mut self) -> bool {
         let Some(msg) = self.selected_message() else {
             return false;
@@ -6475,6 +6646,7 @@ impl App {
         self.channel_picker = None;
         self.pings = None;
         self.message_actions = None;
+        self.profile_edit = None;
         self.pins = None;
         self.saved = None;
         self.reaction_users = None;

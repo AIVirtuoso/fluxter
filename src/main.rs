@@ -2138,6 +2138,44 @@ fn handle_key_event(
         return;
     }
 
+    if app.profile_edit.is_some() {
+        // typing takes the keys while the footer is asking for a value
+        if let Some(input) = app.profile_edit.as_ref().and_then(|v| v.input.clone()) {
+            match key.code {
+                KeyCode::Esc => app.profile_edit_back(),
+                KeyCode::Enter => run_profile_edit_input(app, client, event_tx, input),
+                KeyCode::Backspace => {
+                    if let Some(view) = app.profile_edit.as_mut()
+                        && let Some(input) = view.input.as_mut()
+                    {
+                        input.text_mut().pop();
+                    }
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(view) = app.profile_edit.as_mut()
+                        && let Some(input) = view.input.as_mut()
+                        && input.text().chars().count() < 320
+                    {
+                        input.text_mut().push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.profile_edit_back(),
+            KeyCode::Up | KeyCode::Char('k') => app.profile_edit_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.profile_edit_move(1),
+            KeyCode::Home => app.profile_edit_move(isize::MIN / 2),
+            KeyCode::End => app.profile_edit_move(isize::MAX / 2),
+            KeyCode::Enter => start_profile_edit_row(app, client, event_tx),
+            KeyCode::Char('x') | KeyCode::Delete => clear_profile_edit_row(app, client, event_tx),
+            _ => {}
+        }
+        return;
+    }
+
     if app.pins.is_some() {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => app.dismiss_pins(),
@@ -3147,6 +3185,16 @@ fn handle_key_event(
                 None => app.set_status("Open a community's channel first."),
             }
         }
+        // Alt+E = your own profile
+        KeyCode::Char('e') | KeyCode::Char('E')
+            if key.modifiers.contains(KeyModifiers::ALT)
+                && matches!(
+                    app.focus,
+                    Focus::Servers | Focus::Channels | Focus::Messages
+                ) =>
+        {
+            app.open_profile_edit();
+        }
         // Alt+F = friends, requests and blocked accounts
         KeyCode::Char('f') | KeyCode::Char('F')
             if key.modifiers.contains(KeyModifiers::ALT)
@@ -3882,6 +3930,221 @@ fn run_voice_action(
 
 /// Enter on the footer's text: what it does depends on what was asked
 /// for.
+/// Enter on a profile row: the text ones open the footer, the reply
+/// preference cycles on the spot.
+fn start_profile_edit_row(
+    app: &mut App,
+    client: &FluxerHttpClient,
+    event_tx: &UnboundedSender<AppEvent>,
+) {
+    use crate::app::{ProfileEditInput, ProfileEditRow};
+    let Some(row) = app.profile_edit_selected_row() else {
+        return;
+    };
+    let current = app.profile_edit_value(row);
+    match row {
+        ProfileEditRow::ReplyMentions => {
+            let flags = app.next_reply_mention_flag();
+            let label = crate::app::REPLY_MENTION_CHOICES
+                .iter()
+                .find(|(value, _)| *value == flags)
+                .map(|(_, label)| *label)
+                .unwrap_or("whatever they choose");
+            app.set_status(format!("Replies: {label}."));
+            spawn_modify_me(
+                client.clone(),
+                event_tx.clone(),
+                crate::api::types::ModifyCurrentUserRequest {
+                    mention_flags: Some(flags),
+                    ..Default::default()
+                },
+                "Saved.",
+            );
+        }
+        ProfileEditRow::Picture => {
+            if let Some(view) = app.profile_edit.as_mut() {
+                view.input = Some(ProfileEditInput::PicturePath(String::new()));
+            }
+        }
+        ProfileEditRow::DisplayName => {
+            if let Some(view) = app.profile_edit.as_mut() {
+                view.input = Some(ProfileEditInput::DisplayName(current));
+            }
+        }
+        ProfileEditRow::Bio => {
+            if let Some(view) = app.profile_edit.as_mut() {
+                view.input = Some(ProfileEditInput::Bio(current));
+            }
+        }
+        ProfileEditRow::Pronouns => {
+            if let Some(view) = app.profile_edit.as_mut() {
+                view.input = Some(ProfileEditInput::Pronouns(current));
+            }
+        }
+        ProfileEditRow::AccentColour => {
+            if let Some(view) = app.profile_edit.as_mut() {
+                view.input = Some(ProfileEditInput::AccentColour(current));
+            }
+        }
+    }
+}
+
+/// x on a profile row: the explicit null the server wants to clear it.
+fn clear_profile_edit_row(
+    app: &mut App,
+    client: &FluxerHttpClient,
+    event_tx: &UnboundedSender<AppEvent>,
+) {
+    use crate::api::types::ModifyCurrentUserRequest;
+    use crate::app::ProfileEditRow;
+    let Some(row) = app.profile_edit_selected_row() else {
+        return;
+    };
+    if !row.clearable() {
+        return;
+    }
+    let body = match row {
+        ProfileEditRow::DisplayName => ModifyCurrentUserRequest {
+            global_name: Some(None),
+            ..Default::default()
+        },
+        ProfileEditRow::Bio => ModifyCurrentUserRequest {
+            bio: Some(None),
+            ..Default::default()
+        },
+        ProfileEditRow::Pronouns => ModifyCurrentUserRequest {
+            pronouns: Some(None),
+            ..Default::default()
+        },
+        ProfileEditRow::AccentColour => ModifyCurrentUserRequest {
+            accent_color: Some(None),
+            ..Default::default()
+        },
+        ProfileEditRow::Picture => ModifyCurrentUserRequest {
+            avatar: Some(None),
+            ..Default::default()
+        },
+        ProfileEditRow::ReplyMentions => return,
+    };
+    app.set_status("Clearing…");
+    spawn_modify_me(client.clone(), event_tx.clone(), body, "Cleared.");
+}
+
+/// Enter on the profile editor's footer, once the value is typed.
+fn run_profile_edit_input(
+    app: &mut App,
+    client: &FluxerHttpClient,
+    event_tx: &UnboundedSender<AppEvent>,
+    input: crate::app::ProfileEditInput,
+) {
+    use crate::api::types::ModifyCurrentUserRequest;
+    use crate::app::ProfileEditInput;
+    if let Some(view) = app.profile_edit.as_mut() {
+        view.input = None;
+    }
+    let body = match input {
+        ProfileEditInput::DisplayName(text) => {
+            let text = text.trim().to_string();
+            ModifyCurrentUserRequest {
+                global_name: Some((!text.is_empty()).then_some(text)),
+                ..Default::default()
+            }
+        }
+        ProfileEditInput::Bio(text) => {
+            let text = text.trim().to_string();
+            ModifyCurrentUserRequest {
+                bio: Some((!text.is_empty()).then_some(text)),
+                ..Default::default()
+            }
+        }
+        ProfileEditInput::Pronouns(text) => {
+            let text = text.trim().to_string();
+            ModifyCurrentUserRequest {
+                pronouns: Some((!text.is_empty()).then_some(text)),
+                ..Default::default()
+            }
+        }
+        ProfileEditInput::AccentColour(text) => {
+            let text = text.trim().to_string();
+            if text.is_empty() {
+                ModifyCurrentUserRequest {
+                    accent_color: Some(None),
+                    ..Default::default()
+                }
+            } else {
+                let Some(colour) = parse_hex_colour(&text) else {
+                    app.set_status("A colour is six hex digits, like #3498db.");
+                    return;
+                };
+                ModifyCurrentUserRequest {
+                    accent_color: Some(Some(colour)),
+                    ..Default::default()
+                }
+            }
+        }
+        ProfileEditInput::PicturePath(text) => {
+            let path = crate::media::expand_home(text.trim());
+            match std::fs::read(&path) {
+                Ok(bytes) if bytes.is_empty() => {
+                    app.set_status("That file is empty.");
+                    return;
+                }
+                Ok(bytes) => {
+                    let uri = crate::media::data_uri_for_file(&path, &bytes);
+                    app.set_status("Sending the picture…");
+                    ModifyCurrentUserRequest {
+                        avatar: Some(Some(uri)),
+                        ..Default::default()
+                    }
+                }
+                Err(err) => {
+                    app.set_status(format!("Could not read it: {err}"));
+                    return;
+                }
+            }
+        }
+    };
+    app.set_status("Saving…");
+    spawn_modify_me(client.clone(), event_tx.clone(), body, "Saved.");
+}
+
+/// "#3498db", "3498db" or "0x3498db" as the packed integer the API takes.
+fn parse_hex_colour(text: &str) -> Option<u32> {
+    let cleaned = text
+        .trim()
+        .trim_start_matches('#')
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    if cleaned.len() != 6 || !cleaned.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(cleaned, 16).ok()
+}
+
+/// Change the account's own profile. USER_UPDATE comes back over the
+/// gateway, so nothing is applied here.
+fn spawn_modify_me(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    body: crate::api::types::ModifyCurrentUserRequest,
+    done: &str,
+) {
+    let done = done.to_string();
+    tokio::spawn(async move {
+        match client.modify_current_user(&body).await {
+            Ok(user) => {
+                let _ = event_tx.send(AppEvent::OwnUserUpdated {
+                    user: Box::new(user),
+                });
+                let _ = event_tx.send(AppEvent::SetStatus(done));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to save it: {err}")));
+            }
+        }
+    });
+}
+
 fn run_community_input(
     app: &mut App,
     client: &FluxerHttpClient,
@@ -5893,5 +6156,30 @@ mod key_tests {
         ));
         b.input_type('b');
         assert_eq!(b.input_text(), "a\nb");
+    }
+}
+
+/// The colour a profile row takes, and the one thing about it that is
+/// easy to get wrong: what counts as six hex digits.
+#[cfg(test)]
+mod colour_tests {
+    use super::parse_hex_colour;
+
+    #[test]
+    fn a_colour_is_six_hex_digits_however_it_is_prefixed() {
+        assert_eq!(parse_hex_colour("#3498db"), Some(0x3498db));
+        assert_eq!(parse_hex_colour("3498db"), Some(0x3498db));
+        assert_eq!(parse_hex_colour("0x3498DB"), Some(0x3498db));
+        assert_eq!(parse_hex_colour("  #ffffff "), Some(0xffffff));
+        assert_eq!(parse_hex_colour("#000000"), Some(0));
+    }
+
+    #[test]
+    fn anything_else_is_refused_rather_than_guessed_at() {
+        assert_eq!(parse_hex_colour(""), None);
+        assert_eq!(parse_hex_colour("#fff"), None);
+        assert_eq!(parse_hex_colour("#1234567"), None);
+        assert_eq!(parse_hex_colour("blue"), None);
+        assert_eq!(parse_hex_colour("#12345g"), None);
     }
 }

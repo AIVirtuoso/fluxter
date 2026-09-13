@@ -59,6 +59,13 @@ Focus & navigation
            [media] voice_command, and the menu says plainly when there is none
            (see README, "Voice").
 
+Yourself
+  Alt+E - your own profile: display name, about you, pronouns, accent colour,
+           picture (a path to a file), and what happens when somebody replies to
+           you. Enter changes a row, x clears it, Esc closes.
+  /status online|idle|dnd|invisible - your online status
+  /customstatus <text> - the line under your name (alone clears it)
+
 Servers (left column)
   Up / Down / j / k - move server selection
   n - notification settings for the selected community
