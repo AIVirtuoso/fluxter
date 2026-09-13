@@ -518,6 +518,9 @@ async fn main() -> Result<()> {
     let mut needs_redraw = true;
     // when the redraw is for the user's own key, it is never held back
     let mut urgent_redraw = false;
+    // the second the recording indicator last showed, so it is redrawn
+    // when the clock moves and once more when the recording ends
+    let mut recording_shown: Option<i64> = None;
     let mut last_draw = Instant::now() - PERF_FRAME_GAP;
     let mut frame_stats = FrameStats::default();
     // a burst of messages gets one sound, not one per message
@@ -792,6 +795,11 @@ async fn main() -> Result<()> {
                 }
                 if let Some(channel_id) = app.own_typing_due() {
                     spawn_start_typing(authed_client.clone(), channel_id);
+                }
+
+                if app.recording_secs() != recording_shown {
+                    recording_shown = app.recording_secs();
+                    needs_redraw = true;
                 }
 
                 let s_prev = app.status_message.clone();

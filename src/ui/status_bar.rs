@@ -1,7 +1,7 @@
 use crate::app::{App, Focus, ServerSelection};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -85,13 +85,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         status_mid = format!(" | \u{1F50A} {voice}");
     }
     // a recording outranks everything: it is running on the microphone
-    // and the reader has to be able to see that it is
-    if let Some(secs) = app.recording_secs() {
-        status_mid = format!(
-            " | \u{23FA} recording {}  Ctrl+R sends \u{b7} Esc throws away",
-            crate::media::format_duration(secs)
-        );
-    }
+    // and the reader has to be able to see that it is, so it is drawn in
+    // red beside the dim status rather than as part of it
+    let recording = app
+        .recording_secs()
+        .map(|secs| format!(" | {}", recording_label(secs)));
 
     let hints = hints_for(app);
 
@@ -111,8 +109,48 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             format!(" | {server}{status_mid}"),
             crate::ui::theme::dim_style(),
         ),
+        Span::styled(recording.unwrap_or_default(), recording_style()),
         Span::styled(hints, crate::ui::theme::muted_style()),
     ]))
     .style(Style::default().bg(crate::ui::theme::bg_tertiary()));
     frame.render_widget(paragraph, area);
+}
+
+/// What a running recording says of itself: a dot that blinks once a
+/// second, the time recorded, and the two keys that end it. The dot is
+/// U+25CF, which the console fonts have, rather than a record symbol they
+/// do not.
+pub fn recording_label(secs: i64) -> String {
+    let dot = if secs % 2 == 0 {
+        "\u{25CF}"
+    } else {
+        "\u{25CB}"
+    };
+    format!(
+        "{dot} REC {}  Ctrl+R sends \u{b7} Esc throws it away",
+        crate::media::format_duration(secs)
+    )
+}
+
+/// Red and bold: the one thing on the screen that must not be missed
+/// while the microphone is open.
+pub fn recording_style() -> Style {
+    Style::default()
+        .fg(crate::ui::theme::danger())
+        .add_modifier(Modifier::BOLD)
+}
+
+#[cfg(test)]
+mod recording_tests {
+    use super::recording_label;
+
+    #[test]
+    fn the_label_carries_the_time_and_blinks_once_a_second() {
+        let a = recording_label(2);
+        let b = recording_label(3);
+        assert!(a.contains("REC 0:02"), "{a}");
+        assert!(b.contains("REC 0:03"), "{b}");
+        assert!(a.starts_with('\u{25CF}') && b.starts_with('\u{25CB}'));
+        assert!(a.contains("Ctrl+R sends") && a.contains("Esc throws it away"));
+    }
 }

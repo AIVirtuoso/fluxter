@@ -269,12 +269,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) -> Option<(u16, u16)> {
         )
     };
 
-    let title_line = Line::from(Span::styled(
-        format!(" {title}"),
-        Style::default()
-            .add_modifier(Modifier::BOLD)
-            .patch(crate::ui::theme::dim_style()),
-    ));
+    // while the microphone is open the box says so instead of its mode,
+    // in red, with the clock and the keys that end the recording
+    let title_line = match app.recording_secs() {
+        Some(secs) => Line::from(Span::styled(
+            format!(" {}", crate::ui::status_bar::recording_label(secs)),
+            crate::ui::status_bar::recording_style(),
+        )),
+        None => Line::from(Span::styled(
+            format!(" {title}"),
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .patch(crate::ui::theme::dim_style()),
+        )),
+    };
 
     let focused = app.focus == Focus::Input;
     let mut blk = Block::default()
