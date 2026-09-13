@@ -310,6 +310,10 @@ pub struct GuildMemberResponse {
     /// ISO 8601, when the member joined.
     #[serde(default)]
     pub joined_at: Option<String>,
+    /// ISO 8601: while this is in the future the member is on a
+    /// communication timeout and cannot talk or react.
+    #[serde(default)]
+    pub communication_disabled_until: Option<String>,
 }
 
 /// The customisable part of a profile: the user's own, or their
@@ -1565,6 +1569,43 @@ impl RelationshipResponse {
 /// Bit 2 of a message's `flags`: the server leaves the embeds out of
 /// the message when it is set, which is what "suppress embeds" does.
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
+
+/// One entry of `GET /guilds/{id}/bans`. The server never hands back the
+/// address or the email a ban also stores.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GuildBanResponse {
+    #[serde(default)]
+    pub user: UserPartialResponse,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub moderator_id: String,
+    #[serde(default)]
+    pub banned_at: String,
+    /// When a temporary ban stops applying; None for a permanent one.
+    #[serde(default)]
+    pub expires_at: Option<String>,
+}
+
+/// The body of `PUT /guilds/{id}/bans/{user}`. Every field is optional: a
+/// bare request is a permanent ban that deletes nothing.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CreateGuildBanRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// How much of the target's recent history to delete, in seconds
+    /// (0 to 604800).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delete_message_seconds: Option<u32>,
+}
+
+/// The part of `PATCH /guilds/{id}/members/{user}` this client sends: a
+/// communication timeout, or null to clear one.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ModifyGuildMemberRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub communication_disabled_until: Option<Option<String>>,
+}
 
 /// One entry of `GET /channels/{id}/messages/pins`: the message and when
 /// it was pinned (which is not the message's own timestamp).

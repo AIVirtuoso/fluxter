@@ -1051,6 +1051,82 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// Take a member out of a community. Needs KICK_MEMBERS and standing
+    /// over them; the owner and the caller come back as UNKNOWN_MEMBER.
+    pub async fn kick_member(&self, guild_id: &str, user_id: &str) -> Result<()> {
+        self.send_empty::<()>(
+            Method::DELETE,
+            &format!("/guilds/{guild_id}/members/{user_id}"),
+            None,
+            "remove them from the community",
+        )
+        .await
+    }
+
+    /// Ban an account from a community. Banning one that is already
+    /// banned replaces the record rather than failing.
+    pub async fn ban_member(
+        &self,
+        guild_id: &str,
+        user_id: &str,
+        body: &crate::api::types::CreateGuildBanRequest,
+    ) -> Result<()> {
+        self.send_empty(
+            Method::PUT,
+            &format!("/guilds/{guild_id}/bans/{user_id}"),
+            Some(body),
+            "ban them",
+        )
+        .await
+    }
+
+    pub async fn unban_member(&self, guild_id: &str, user_id: &str) -> Result<()> {
+        self.send_empty::<()>(
+            Method::DELETE,
+            &format!("/guilds/{guild_id}/bans/{user_id}"),
+            None,
+            "lift the ban",
+        )
+        .await
+    }
+
+    /// Every ban of a community, in one response: the endpoint has no
+    /// cursor. Needs BAN_MEMBERS.
+    pub async fn guild_bans(
+        &self,
+        guild_id: &str,
+    ) -> Result<Vec<crate::api::types::GuildBanResponse>> {
+        self.send_json::<(), (), Vec<crate::api::types::GuildBanResponse>>(
+            Method::GET,
+            &format!("/guilds/{guild_id}/bans"),
+            None::<&()>,
+            None,
+            false,
+        )
+        .await
+    }
+
+    /// Put a member on a communication timeout, or lift one with None.
+    /// Needs MODERATE_MEMBERS, standing over them, and a target without
+    /// ADMINISTRATOR.
+    pub async fn timeout_member(
+        &self,
+        guild_id: &str,
+        user_id: &str,
+        until: Option<String>,
+    ) -> Result<()> {
+        let body = crate::api::types::ModifyGuildMemberRequest {
+            communication_disabled_until: Some(until),
+        };
+        self.send_empty(
+            Method::PATCH,
+            &format!("/guilds/{guild_id}/members/{user_id}"),
+            Some(&body),
+            "change the timeout",
+        )
+        .await
+    }
+
     /// Leave a community. The reader cannot leave one they own; the
     /// server says so.
     pub async fn leave_guild(&self, guild_id: &str) -> Result<()> {
