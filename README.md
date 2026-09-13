@@ -1013,6 +1013,29 @@ An invite made with **+** is a day long with no limit on uses, which is
 what the server itself defaults to, and its link goes on the clipboard as
 soon as it exists.
 
+## Your data, a gift code, your linked accounts
+
+Three `/` commands that ask the server something about your account and put
+the answer in the channel as a Fluxerbot line, because each is a few facts
+rather than a status message.
+
+| Command | What it does |
+| ------- | ------------ |
+| `/export` | Asks for an export of everything the server holds about you, or, when one is already in hand, says how it is getting on. Once it is finished the same command mints a download address and puts it on the clipboard. |
+| `/gift <code>` | Says what the code grants and who made it, without spending it. `/gift <code> redeem` takes it -- the extra word is there so nothing is redeemed by pressing Enter. |
+| `/connections` | The accounts linked to yours, with the unverified ones marked. |
+
+**An export's download address is a secret.** Each request mints a new
+bearer URL good for seven days, and anybody holding it can fetch the
+archive, so it goes to the clipboard and the line says as much rather than
+printing it into the channel. The archive itself holds your account
+document, your messages channel by channel, your payment history, the
+applications you own and your security log -- metadata for attachments, never
+the files.
+
+Linking an account and the whole of billing are browser flows, so they are
+not here: `/connections` reads, and the web client is where one is added.
+
 ## Message formatting
 
 Messages are drawn with the markup Fluxer's own parser understands, so

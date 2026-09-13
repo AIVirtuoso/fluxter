@@ -152,6 +152,82 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// Ask the server for an export of everything it holds about the
+    /// account. It answers at once and builds the archive afterwards.
+    pub async fn request_harvest(&self) -> Result<crate::api::types::HarvestCreationResponse> {
+        self.send_json::<(), (), crate::api::types::HarvestCreationResponse>(
+            Method::POST,
+            "/users/@me/harvest",
+            None::<&()>,
+            None,
+            false,
+        )
+        .await
+    }
+
+    /// The newest export and where it has got to. 404 when there is none.
+    pub async fn latest_harvest(&self) -> Result<crate::api::types::HarvestStatusResponse> {
+        self.send_json::<(), (), crate::api::types::HarvestStatusResponse>(
+            Method::GET,
+            "/users/@me/harvest/latest",
+            None::<&()>,
+            None,
+            false,
+        )
+        .await
+    }
+
+    /// A temporary address a finished export can be fetched from. Each
+    /// call mints a new bearer URL, so it is treated as a credential.
+    pub async fn harvest_download(
+        &self,
+        harvest_id: &str,
+    ) -> Result<crate::api::types::HarvestDownloadResponse> {
+        self.send_json::<(), (), crate::api::types::HarvestDownloadResponse>(
+            Method::GET,
+            &format!("/users/@me/harvest/{harvest_id}/download"),
+            None::<&()>,
+            None,
+            false,
+        )
+        .await
+    }
+
+    /// What a gift code grants, before it is redeemed.
+    pub async fn gift(&self, code: &str) -> Result<crate::api::types::GiftResponse> {
+        self.send_json::<(), (), crate::api::types::GiftResponse>(
+            Method::GET,
+            &format!("/gifts/{code}"),
+            None::<&()>,
+            None,
+            false,
+        )
+        .await
+    }
+
+    pub async fn redeem_gift(&self, code: &str) -> Result<()> {
+        self.send_empty::<()>(
+            Method::POST,
+            &format!("/gifts/{code}/redeem"),
+            None,
+            "redeem the gift",
+        )
+        .await
+    }
+
+    /// The accounts linked to this one. Adding one is a browser flow, so
+    /// this is a read.
+    pub async fn connections(&self) -> Result<Vec<crate::api::types::ConnectionResponse>> {
+        self.send_json::<(), (), Vec<crate::api::types::ConnectionResponse>>(
+            Method::GET,
+            "/users/@me/connections",
+            None::<&()>,
+            None,
+            false,
+        )
+        .await
+    }
+
     pub async fn current_user_settings(&self) -> Result<UserSettingsResponse> {
         self.send_json::<(), (), UserSettingsResponse>(
             Method::GET,

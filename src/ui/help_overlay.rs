@@ -59,6 +59,12 @@ Focus & navigation
            [media] voice_command, and the menu says plainly when there is none
            (see README, "Voice").
 
+Your account
+  /export - ask for a data export, or see how the last one is getting on; its
+           download address goes on the clipboard, and it is a secret
+  /gift <code> - what a gift code grants; /gift <code> redeem takes it
+  /connections - the accounts linked to yours
+
 Servers (left column)
   Up / Down / j / k - move server selection
   n - notification settings for the selected community

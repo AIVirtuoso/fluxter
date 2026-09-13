@@ -334,7 +334,8 @@ pub struct MutualGuildResponse {
     pub nick: Option<String>,
 }
 
-/// A verified external account shown on a profile.
+/// A verified external account shown on a profile, and the same shape the
+/// reader's own linked accounts come back in.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ConnectionResponse {
     #[serde(default, rename = "type")]
@@ -343,6 +344,10 @@ pub struct ConnectionResponse {
     pub name: String,
     #[serde(default)]
     pub verified: bool,
+    /// Whether it is shown on the public profile; only the reader's own
+    /// connections carry it.
+    #[serde(default)]
+    pub visibility: Option<i32>,
 }
 
 /// `GET /users/{id}/profile`: what the web app's profile popup shows.
@@ -1565,6 +1570,60 @@ impl RelationshipResponse {
 /// Bit 2 of a message's `flags`: the server leaves the embeds out of
 /// the message when it is set, which is what "suppress embeds" does.
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
+
+/// `POST /users/@me/harvest`: the export was asked for and is being made.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HarvestCreationResponse {
+    #[serde(default, deserialize_with = "deserialize_snowflake_string")]
+    pub harvest_id: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub created_at: String,
+}
+
+/// Where one export has got to.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HarvestStatusResponse {
+    #[serde(default, deserialize_with = "deserialize_snowflake_string")]
+    pub harvest_id: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    /// 0 to 100 while it is being made.
+    #[serde(default)]
+    pub progress: Option<i64>,
+}
+
+/// The temporary address one finished export can be fetched from. Every
+/// call mints a new one and each is a bearer URL, so it is handled like a
+/// credential.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HarvestDownloadResponse {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+}
+
+/// A gift code before it is redeemed: how much it grants, and whether
+/// somebody has already used it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GiftResponse {
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub duration_type: String,
+    #[serde(default)]
+    pub duration_quantity: i64,
+    #[serde(default)]
+    pub redeemed: bool,
+    #[serde(default)]
+    pub created_by: Option<UserPartialResponse>,
+}
 
 /// One entry of `GET /channels/{id}/messages/pins`: the message and when
 /// it was pinned (which is not the message's own timestamp).

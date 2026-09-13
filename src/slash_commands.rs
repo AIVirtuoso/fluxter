@@ -72,6 +72,27 @@ pub static SLASH_COMMANDS: &[SlashCommandDef] = &[
         requires_channel_perm: None,
     },
     SlashCommandDef {
+        name: "/export",
+        description: "Ask the server for an export of your data, or say where the last one got to.",
+        simple_append: None,
+        requires_guild: false,
+        requires_channel_perm: None,
+    },
+    SlashCommandDef {
+        name: "/gift",
+        description: "Look a gift code up: /gift <code>, then /gift <code> redeem to take it.",
+        simple_append: None,
+        requires_guild: false,
+        requires_channel_perm: None,
+    },
+    SlashCommandDef {
+        name: "/connections",
+        description: "The accounts linked to yours, as your profile shows them.",
+        simple_append: None,
+        requires_guild: false,
+        requires_channel_perm: None,
+    },
+    SlashCommandDef {
         name: "/debug",
         description: "Debug panel: session facts and the last log lines (/debug save writes them to a file, /debug frame maps the screen into the log).",
         simple_append: None,
@@ -155,6 +176,15 @@ pub enum OutgoingSlash {
     AttachPick,
     /// Open the sticker picker, filtered by what came after the command.
     StickerPick(String),
+    /// Ask for a data export, or report the last one's state.
+    Export,
+    /// Look a gift code up, and take it when `redeem` is set.
+    Gift {
+        code: String,
+        redeem: bool,
+    },
+    /// List the accounts linked to this one.
+    Connections,
     /// Open the debug panel.
     Debug,
     /// Write the debug panel's facts and log lines to a file.
@@ -259,6 +289,36 @@ pub fn resolve_outgoing_slash(
     }
     if let Some(rest) = t.strip_prefix("/sticker ") {
         return OutgoingSlash::StickerPick(rest.trim().to_string());
+    }
+    if t == "/export" {
+        return OutgoingSlash::Export;
+    }
+    if t == "/connections" {
+        return OutgoingSlash::Connections;
+    }
+    if let Some(rest) = t.strip_prefix("/gift") {
+        let rest = rest.trim();
+        if rest.is_empty() {
+            return OutgoingSlash::Blocked(
+                "Give a code: /gift <code>, and /gift <code> redeem takes it.".to_string(),
+            );
+        }
+        // "<code> redeem" takes it; a code on its own only looks it up, so
+        // nobody spends a gift by pressing Enter
+        if rest.eq_ignore_ascii_case("redeem") {
+            return OutgoingSlash::Blocked("Give a code before `redeem`.".to_string());
+        }
+        let (code, redeem) = match rest.rsplit_once(char::is_whitespace) {
+            Some((head, tail)) if tail.eq_ignore_ascii_case("redeem") => (head.trim(), true),
+            _ => (rest, false),
+        };
+        if code.is_empty() {
+            return OutgoingSlash::Blocked("Give a code before `redeem`.".to_string());
+        }
+        return OutgoingSlash::Gift {
+            code: code.to_string(),
+            redeem,
+        };
     }
     if t == "/debug" {
         return OutgoingSlash::Debug;
@@ -390,5 +450,47 @@ mod tests {
         // the server takes 128 characters, so a longer one is stopped here
         let long = format!("/customstatus {}", "x".repeat(129));
         assert!(matches!(pick(&long), OutgoingSlash::Blocked(_)));
+    }
+}
+
+#[cfg(test)]
+mod account_extras_tests {
+    use super::*;
+
+    fn parse(input: &str) -> OutgoingSlash {
+        resolve_outgoing_slash(input, None, "me", "me", u64::MAX)
+    }
+
+    /// A code on its own only looks the gift up. Spending it takes the word
+    /// `redeem`, so nobody gives a gift away by pressing Enter.
+    #[test]
+    fn a_gift_is_looked_up_unless_redeem_is_asked_for() {
+        assert!(matches!(
+            parse("/gift ABC123"),
+            OutgoingSlash::Gift { redeem: false, .. }
+        ));
+        let OutgoingSlash::Gift { code, redeem } = parse("/gift ABC123 redeem") else {
+            panic!("redeem should parse");
+        };
+        assert_eq!(code, "ABC123");
+        assert!(redeem);
+        // and the case of the word does not matter
+        assert!(matches!(
+            parse("/gift ABC123 REDEEM"),
+            OutgoingSlash::Gift { redeem: true, .. }
+        ));
+    }
+
+    #[test]
+    fn a_gift_with_no_code_says_so_rather_than_sending_anything() {
+        assert!(matches!(parse("/gift"), OutgoingSlash::Blocked(_)));
+        assert!(matches!(parse("/gift   "), OutgoingSlash::Blocked(_)));
+        assert!(matches!(parse("/gift redeem"), OutgoingSlash::Blocked(_)));
+    }
+
+    #[test]
+    fn the_other_two_take_nothing() {
+        assert!(matches!(parse("/export"), OutgoingSlash::Export));
+        assert!(matches!(parse("/connections"), OutgoingSlash::Connections));
     }
 }
