@@ -1,0 +1,112 @@
+name: Security
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/security.yml"
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/security.yml"
+  # an advisory is published against a crate we have not touched in months,
+  # so the check has to run on its own as well as on our commits
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # bump this and the cache key below together to take a newer cargo-audit
+  CARGO_AUDIT_VERSION: "^0.22"
+
+jobs:
+  # what the program is built from: every crate in Cargo.lock against the
+  # RustSec advisory database
+  audit:
+    name: dependency advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: rust setup
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: restore the cargo-audit binary
+        id: audit-bin
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit-0.22
+
+      - name: install cargo-audit
+        if: steps.audit-bin.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --version "$CARGO_AUDIT_VERSION" --locked
+
+      # saved here rather than at the end of the job: actions/cache writes its
+      # cache only when the job succeeded, and a job that found a vulnerability
+      # has not, so the three minutes of building cargo-audit would be paid
+      # again on every run for as long as the lock file has a hole in it
+      - name: cache the cargo-audit binary
+        if: steps.audit-bin.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit-0.22
+
+      # cargo audit clones the advisory database on every run, so this says
+      # what RustSec knows today, not what it knew when Cargo.lock was written.
+      # It fails on vulnerabilities only: unmaintained, unsound and yanked
+      # crates are printed as warnings and do not turn the run red, because
+      # several of them (lru and rand through ratatui, paste, core2 through
+      # image) have no upgrade path that does not wait on those crates.
+      # --deny warnings turns them into failures if that is ever wanted.
+      - name: audit Cargo.lock
+        run: |
+          status=0
+          cargo audit --color never > audit.txt 2>&1 || status=$?
+          cat audit.txt
+          {
+            echo '## cargo audit'
+            echo
+            echo '```'
+            cat audit.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+  # what we wrote ourselves: CodeQL reads src/ and files what it finds under
+  # the repository's Security tab (free for public repositories). The Rust
+  # extractor parses the source, so there is nothing to build here.
+  codeql:
+    name: codeql (rust)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: rust setup
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: codeql init
+        uses: github/codeql-action/init@v3
+        with:
+          languages: rust
+          build-mode: none
+
+      - name: codeql analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:rust"
