@@ -967,6 +967,11 @@ row, and those work straight from the message pane without the menu.
 | Delete the marked messages | | **m** marks a message (a red cross appears in its margin); this deletes every marked message of the channel in one call. Asks a second time first. Needs **Manage Messages** and at least two marks, and the server refuses messages more than two weeks old. |
 | Report this message to the moderators | | Asks which of the server's twelve categories, then sends it. Other people's messages only. |
 | Report the account to the moderators | | A report about the person rather than the message, with its own seven categories. Names the community you are in, where you are in one. |
+| Report to the moderators | | Asks which of the server's twelve categories, then sends it. Other people's messages only. |
+| Time the author out | | Asks how long -- a minute, five, ten, an hour, a day, a week -- and stops them talking or reacting in the community until then. Needs **Moderate Members**. |
+| Lift the author's timeout | | Offered instead of the row above while their timeout is still running. |
+| Remove the author from the community | | A kick: they lose their nickname, roles and guild profile, and may come back through an invite. Asks a second time. Needs **Kick Members**. |
+| Ban the author from the community | | Permanent, deletes none of their messages, and also blocks the address and the account email the ban records. Asks a second time. Needs **Ban Members**. |
 
 Pins, bookmarks, bulk deletes and cleared reactions arrive over the
 gateway as well, so a change made in another client shows here without a
@@ -996,6 +1001,25 @@ for a message report the message's own id, and copies no media. There are
 **five reports an hour** across all three, and an account whose email is
 unverified cannot report at all -- both are the server's answer, shown as it
 came.
+### Looking after the people, not the message
+
+The last four rows act on whoever wrote the message rather than on the
+message. They are only there inside a community, never on your own
+message, and never on the community's owner, whom the server refuses for
+all three -- so the menu does not offer what would come back as an error.
+Each row appears only with the permission it needs, read on the channel
+the message is in.
+
+The list of **banned accounts** is in the community menu (**Alt+C**),
+which is also where a ban is lifted: each row names the account, whether
+the ban is permanent or when it lifts itself, and the reason recorded with
+it. **x** lifts the one under the cursor and reads the list again, **R**
+reloads it. That row needs **Ban Members** too.
+
+Where a community's **MFA level is elevated** and you do not own it, a
+timeout, a kick and a ban each need an enrolled authenticator on your
+account. This client cannot enrol one, so the server answers
+`TWO_FACTOR_REQUIRED` and the status line shows that as it came.
 
 ## Searching
 
@@ -1093,6 +1117,7 @@ first three are always there, the last two only inside a community.
 | **Browse the directory** | The instance's discovery listing. **/** searches it, **Enter** joins straight from the list without an invite. |
 | **Invites to this community** | Every invite you may see. **y** copies its link, **+** makes one to the channel now open, **x** revokes. |
 | **Report this community** | A report about the community itself, with its own nine categories. Not offered for one you own, which the server refuses anyway. |
+| **Banned accounts** | Every ban of the community: who, permanent or until when, and why. **x** lifts one, **R** reloads. Needs **Ban Members**. |
 | **Leave this community** | Leaves it. A community you own cannot be left, and the client says so rather than sending a call the server would refuse. |
 
 ### An invite is looked up before it is taken
@@ -1391,7 +1416,7 @@ close. The profile of a selected message's author is on **u** now.
 | **Alt+N**               | **Start a conversation** with somebody, or a group with several (see "Conversations").                                                                                                                                                                  |
 | **Alt+G**               | Look after the **group** now open: rename it, add somebody, take somebody out, leave it.                                                                                                                                                                |
 
-| **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites, or leave it (see "Communities and invites").                                                                                                        |
+| **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites or its banned accounts, or leave it (see "Communities and invites").                                                                                                        |
 
 | **Alt+V**               | **Voice**: join the open voice channel, ring a conversation, answer or turn down a call, mute, deafen, leave (see "Voice").                                                                                                                             |
 | **F1**                  | **Keybindings** overlay - **↑** / **↓** / **PgUp** / **PgDn** scroll when it does not fit (**Esc** / **Enter** / **q** to close).                                                                                                                        |

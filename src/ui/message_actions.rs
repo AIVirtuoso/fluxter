@@ -27,7 +27,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             " Message ",
             view.actions
                 .iter()
-                .map(|a| (a.label().to_string(), a.hint().to_string(), false))
+                .map(|a| {
+                    (
+                        a.label().to_string(),
+                        a.hint().to_string(),
+                        a.is_moderation(),
+                    )
+                })
                 .collect(),
             "↑/↓ move  ·  Enter do it  ·  Esc close",
         ),
@@ -54,6 +60,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 .map(|(_, label)| ((*label).to_string(), String::new(), false))
                 .collect(),
             "↑/↓ move  ·  Enter send the report  ·  Esc back",
+        ),
+        MessageActionsMode::TimeoutDurations => (
+            " Time them out for ",
+            crate::app::TIMEOUT_DURATIONS
+                .iter()
+                .map(|(_, label)| ((*label).to_string(), String::new(), false))
+                .collect(),
+            "↑/↓ move  ·  Enter start the timeout  ·  Esc back",
         ),
         MessageActionsMode::Confirm(action) => (
             " Are you sure? ",

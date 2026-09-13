@@ -22,7 +22,7 @@ use crate::api::types::{
     RELATIONSHIP_BLOCKED, RELATIONSHIP_FRIEND, RELATIONSHIP_INCOMING_REQUEST,
     RELATIONSHIP_OUTGOING_REQUEST, RelationshipResponse,
 };
-use crate::api::types::{DiscoveryGuildResponse, InviteResponse};
+use crate::api::types::{DiscoveryGuildResponse, GuildBanResponse, InviteResponse};
 use crate::config::UiSettings;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -1007,6 +1007,8 @@ pub enum CommunityMode {
     },
     /// Which category a report about the community goes under.
     ReportCategories { guild_id: String },
+    /// A community's bans, so one can be lifted.
+    Bans { guild_id: String, state: BansState },
     /// What an invite leads to, looked up before it is taken, so nobody
     /// joins something they cannot see the name of.
     Preview { code: String, state: PreviewState },
@@ -1031,6 +1033,13 @@ pub enum DiscoverState {
 pub enum InvitesState {
     Loading,
     Ready(Vec<InviteResponse>),
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum BansState {
+    Loading,
+    Ready(Vec<GuildBanResponse>),
     Failed(String),
 }
 
@@ -1145,6 +1154,12 @@ pub enum MessageAction {
     Report,
     /// A report about the author's account rather than about the message.
     ReportUser,
+    /// Looking after the author, in a community: the three a moderator
+    /// reaches for, on the member rather than the message.
+    Timeout,
+    ClearTimeout,
+    Kick,
+    Ban,
 }
 
 impl MessageAction {
@@ -1175,6 +1190,10 @@ impl MessageAction {
             Self::DeleteMarked => "Delete the marked messages",
             Self::Report => "Report this message to the moderators",
             Self::ReportUser => "Report the account to the moderators",
+            Self::Timeout => "Time the author out",
+            Self::ClearTimeout => "Lift the author's timeout",
+            Self::Kick => "Remove the author from the community",
+            Self::Ban => "Ban the author from the community",
         }
     }
 
@@ -1200,7 +1219,16 @@ impl MessageAction {
 
     /// Whether choosing it asks for a second press first.
     pub fn needs_confirm(self) -> bool {
-        matches!(self, Self::ClearReactions | Self::DeleteMarked)
+        matches!(
+            self,
+            Self::ClearReactions | Self::DeleteMarked | Self::Kick | Self::Ban
+        )
+    }
+
+    /// Whether the row is drawn in the danger colour and reads as one of
+    /// the things that cannot be taken back.
+    pub fn is_moderation(self) -> bool {
+        matches!(self, Self::Timeout | Self::Kick | Self::Ban)
     }
 }
 
@@ -1216,9 +1244,23 @@ pub enum MessageActionsMode {
     /// The categories a report about the account takes, which are not the
     /// ones a message report takes.
     UserReportCategories,
+    /// How long to time the author out for.
+    TimeoutDurations,
     /// A destructive action waiting for a second press.
     Confirm(MessageAction),
 }
+
+/// The timeouts the menu offers, with the wording on each row. The server
+/// takes a timestamp, so these are turned into one when the row is
+/// chosen; the longest a timeout can run is 28 days.
+pub const TIMEOUT_DURATIONS: [(i64, &str); 6] = [
+    (60, "A minute"),
+    (5 * 60, "Five minutes"),
+    (10 * 60, "Ten minutes"),
+    (60 * 60, "An hour"),
+    (24 * 60 * 60, "A day"),
+    (7 * 24 * 60 * 60, "A week"),
+];
 
 /// What choosing a row of the actions menu comes to. The menu itself
 /// only decides; `main` does the work, since that is where the HTTP
@@ -1590,6 +1632,7 @@ pub enum CommunityAction {
     Discover,
     Invites,
     Report,
+    Bans,
     Leave,
 }
 
@@ -1601,6 +1644,7 @@ impl CommunityAction {
             Self::Discover => "Browse the directory",
             Self::Invites => "Invites to this community",
             Self::Report => "Report this community",
+            Self::Bans => "Banned accounts",
             Self::Leave => "Leave this community",
         }
     }
@@ -6429,7 +6473,62 @@ impl App {
             out.push(MessageAction::Report);
             out.push(MessageAction::ReportUser);
         }
+        out.extend(self.moderation_actions_for(msg));
         out
+    }
+
+    /// The rows that act on the author rather than the message. Only in a
+    /// community, never on the reader themselves, and never on its owner,
+    /// whom the server refuses for every one of them.
+    fn moderation_actions_for(&self, msg: &MessageResponse) -> Vec<MessageAction> {
+        let mut out = Vec::new();
+        let Some(guild_id) = self.guild_id_for_active_channel() else {
+            return out;
+        };
+        if msg.author.id == self.me.id {
+            return out;
+        }
+        let owner = self
+            .guilds
+            .iter()
+            .find(|g| g.id == guild_id)
+            .map(|g| g.owner_id.as_str())
+            .unwrap_or_default();
+        if msg.author.id == owner {
+            return out;
+        }
+        let perms = self.active_channel_permissions();
+        if perms & crate::permissions::MODERATE_MEMBERS != 0 {
+            if self.member_timed_out(&guild_id, &msg.author.id) {
+                out.push(MessageAction::ClearTimeout);
+            } else {
+                out.push(MessageAction::Timeout);
+            }
+        }
+        if perms & crate::permissions::KICK_MEMBERS != 0 {
+            out.push(MessageAction::Kick);
+        }
+        if perms & crate::permissions::BAN_MEMBERS != 0 {
+            out.push(MessageAction::Ban);
+        }
+        out
+    }
+
+    /// Whether a member's communication timeout is still in the future,
+    /// which is what decides between offering one and lifting one.
+    pub fn member_timed_out(&self, guild_id: &str, user_id: &str) -> bool {
+        let Some(members) = self.guild_members.get(guild_id) else {
+            return false;
+        };
+        let Some(member) = members.iter().find(|m| m.user.id == user_id) else {
+            return false;
+        };
+        let Some(until) = member.communication_disabled_until.as_deref() else {
+            return false;
+        };
+        until
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .is_ok_and(|t| t > chrono::Utc::now())
     }
 
     /// Which rows the menu offers. The two that act on a community are
@@ -6450,6 +6549,9 @@ impl App {
                 .any(|g| g.id == guild_id && g.owner_id == self.me.id);
             if !owns {
                 out.push(CommunityAction::Report);
+            }
+            if self.guild_permissions(&guild_id) & crate::permissions::BAN_MEMBERS != 0 {
+                out.push(CommunityAction::Bans);
             }
             out.push(CommunityAction::Leave);
         }
@@ -6836,6 +6938,7 @@ impl App {
                 MessageActionsMode::Attachments(items) => items.len(),
                 MessageActionsMode::ReportCategories => REPORT_CATEGORIES.len(),
                 MessageActionsMode::UserReportCategories => USER_REPORT_CATEGORIES.len(),
+                MessageActionsMode::TimeoutDurations => TIMEOUT_DURATIONS.len(),
                 MessageActionsMode::Confirm(_) => 2,
             },
         }
@@ -6864,6 +6967,10 @@ impl App {
                 ..
             }) => invites.len(),
             Some(CommunityMode::ReportCategories { .. }) => GUILD_REPORT_CATEGORIES.len(),
+            Some(CommunityMode::Bans {
+                state: BansState::Ready(bans),
+                ..
+            }) => bans.len(),
             // nothing to move through while it is still coming, and the
             // preview is one thing rather than a list
             _ => 0,
@@ -7077,6 +7184,16 @@ impl App {
                     argument: Some(category),
                 })
             }
+            MessageActionsMode::TimeoutDurations => {
+                let seconds = TIMEOUT_DURATIONS.get(view.selected)?.0;
+                self.message_actions = None;
+                Some(MessageActionOutcome::Run {
+                    action: MessageAction::Timeout,
+                    channel_id,
+                    message_id,
+                    argument: Some(seconds.to_string()),
+                })
+            }
             MessageActionsMode::ReportCategories => {
                 let category = REPORT_CATEGORIES.get(view.selected)?.0.to_string();
                 self.message_actions = None;
@@ -7116,6 +7233,13 @@ impl App {
                 if action == MessageAction::ReportUser {
                     if let Some(view) = &mut self.message_actions {
                         view.mode = MessageActionsMode::UserReportCategories;
+                        view.selected = 0;
+                    }
+                    return None;
+                }
+                if action == MessageAction::Timeout {
+                    if let Some(view) = &mut self.message_actions {
+                        view.mode = MessageActionsMode::TimeoutDurations;
                         view.selected = 0;
                     }
                     return None;
@@ -7877,6 +8001,55 @@ impl App {
             && guild_id == for_guild
         {
             *state = InvitesState::Failed(message);
+        }
+    }
+
+    pub fn open_guild_bans(&mut self, guild_id: String) {
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::Bans {
+                guild_id,
+                state: BansState::Loading,
+            };
+            view.selected = 0;
+        }
+    }
+
+    pub fn set_guild_bans(&mut self, for_guild: &str, bans: Vec<GuildBanResponse>) {
+        if let Some(view) = &mut self.community
+            && let CommunityMode::Bans { guild_id, state } = &mut view.mode
+            && guild_id == for_guild
+        {
+            *state = BansState::Ready(bans);
+            view.selected = 0;
+        }
+    }
+
+    pub fn set_guild_bans_failed(&mut self, for_guild: &str, message: String) {
+        if let Some(view) = &mut self.community
+            && let CommunityMode::Bans { guild_id, state } = &mut view.mode
+            && guild_id == for_guild
+        {
+            *state = BansState::Failed(message);
+        }
+    }
+
+    pub fn community_selected_ban(&self) -> Option<GuildBanResponse> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::Bans {
+                state: BansState::Ready(bans),
+                ..
+            } => bans.get(view.selected).cloned(),
+            _ => None,
+        }
+    }
+
+    /// The community whose bans are on screen, for the call that lifts one.
+    pub fn community_bans_guild(&self) -> Option<String> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::Bans { guild_id, .. } => Some(guild_id.clone()),
+            _ => None,
         }
     }
 
@@ -11736,5 +11909,254 @@ mod report_tests {
             app.community_report_choice(),
             Some(("g".to_string(), "child_safety".to_string()))
         );
+    }
+}
+
+/// The rows that act on a message's author rather than the message: who
+/// is offered them, and what the timeout list comes to.
+#[cfg(test)]
+mod moderation_tests {
+    use super::*;
+    use crate::api::types::{
+        CHANNEL_GUILD_TEXT, ChannelResponse, GuildMemberResponse, GuildResponse, MessageResponse,
+        UserPartialResponse, UserPrivateResponse, WellKnownFluxerResponse,
+    };
+
+    fn user(id: &str) -> UserPartialResponse {
+        UserPartialResponse {
+            id: id.into(),
+            username: id.into(),
+            discriminator: "0001".into(),
+            ..Default::default()
+        }
+    }
+
+    /// A community where `me` holds the permissions named, with `bob` a
+    /// member and `olive` the owner.
+    fn app_with(permissions: u64) -> App {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: "olive".into(),
+            permissions: Some(permissions.to_string()),
+            ..Default::default()
+        };
+        let channel = ChannelResponse {
+            id: "c".into(),
+            kind: CHANNEL_GUILD_TEXT,
+            name: "general".into(),
+            guild_id: Some("g".into()),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            WellKnownFluxerResponse::default(),
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            Some("c".into()),
+            UiSettings::default(),
+        );
+        app.set_guild_channels("g", vec![channel]);
+        app.guild_members.insert(
+            "g".into(),
+            vec![
+                GuildMemberResponse {
+                    user: user("bob"),
+                    ..Default::default()
+                },
+                GuildMemberResponse {
+                    user: user("olive"),
+                    ..Default::default()
+                },
+            ],
+        );
+        app
+    }
+
+    fn message(author: &str) -> MessageResponse {
+        MessageResponse {
+            id: "1".into(),
+            channel_id: "c".into(),
+            author: user(author),
+            content: "hello".into(),
+            timestamp: "2026-09-12T10:00:00.000Z".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn no_permissions_no_moderation_rows() {
+        let app = app_with(crate::permissions::VIEW_CHANNEL);
+        let rows = app.message_actions_for(&message("bob"));
+        assert!(!rows.contains(&MessageAction::Kick));
+        assert!(!rows.contains(&MessageAction::Ban));
+        assert!(!rows.contains(&MessageAction::Timeout));
+    }
+
+    #[test]
+    fn each_permission_brings_its_own_row() {
+        let app = app_with(
+            crate::permissions::VIEW_CHANNEL
+                | crate::permissions::KICK_MEMBERS
+                | crate::permissions::BAN_MEMBERS
+                | crate::permissions::MODERATE_MEMBERS,
+        );
+        let rows = app.message_actions_for(&message("bob"));
+        assert!(rows.contains(&MessageAction::Timeout));
+        assert!(rows.contains(&MessageAction::Kick));
+        assert!(rows.contains(&MessageAction::Ban));
+    }
+
+    /// The server refuses all three against the owner and against the
+    /// caller, so the menu does not offer them.
+    #[test]
+    fn the_owner_and_the_reader_are_never_offered() {
+        let app = app_with(
+            crate::permissions::VIEW_CHANNEL
+                | crate::permissions::KICK_MEMBERS
+                | crate::permissions::BAN_MEMBERS
+                | crate::permissions::MODERATE_MEMBERS,
+        );
+        for author in ["olive", "me"] {
+            let rows = app.message_actions_for(&message(author));
+            assert!(!rows.contains(&MessageAction::Kick), "{author}");
+            assert!(!rows.contains(&MessageAction::Ban), "{author}");
+            assert!(!rows.contains(&MessageAction::Timeout), "{author}");
+        }
+    }
+
+    #[test]
+    fn a_timed_out_member_is_offered_the_lift_instead() {
+        let mut app =
+            app_with(crate::permissions::VIEW_CHANNEL | crate::permissions::MODERATE_MEMBERS);
+        let future = (chrono::Utc::now() + chrono::Duration::hours(1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        if let Some(members) = app.guild_members.get_mut("g")
+            && let Some(bob) = members.iter_mut().find(|m| m.user.id == "bob")
+        {
+            bob.communication_disabled_until = Some(future);
+        }
+        let rows = app.message_actions_for(&message("bob"));
+        assert!(rows.contains(&MessageAction::ClearTimeout));
+        assert!(!rows.contains(&MessageAction::Timeout));
+
+        // one that has run out is not a timeout any more
+        if let Some(members) = app.guild_members.get_mut("g")
+            && let Some(bob) = members.iter_mut().find(|m| m.user.id == "bob")
+        {
+            bob.communication_disabled_until = Some("2020-01-01T00:00:00.000Z".into());
+        }
+        let rows = app.message_actions_for(&message("bob"));
+        assert!(rows.contains(&MessageAction::Timeout));
+        assert!(!rows.contains(&MessageAction::ClearTimeout));
+    }
+
+    /// Timeout leads to the duration list, and choosing one hands the
+    /// seconds over; the kick and the ban ask a second time first.
+    #[test]
+    fn the_timeout_row_asks_how_long() {
+        let mut app = app_with(
+            crate::permissions::VIEW_CHANNEL
+                | crate::permissions::MODERATE_MEMBERS
+                | crate::permissions::KICK_MEMBERS,
+        );
+        app.upsert_message(message("bob"));
+        app.selected_message_index = Some(0);
+        assert!(app.open_message_actions());
+        let index = app
+            .message_actions
+            .as_ref()
+            .unwrap()
+            .actions
+            .iter()
+            .position(|a| *a == MessageAction::Timeout)
+            .unwrap();
+        if let Some(view) = app.message_actions.as_mut() {
+            view.selected = index;
+        }
+        assert!(app.message_actions_confirm().is_none());
+        assert_eq!(
+            app.message_actions.as_ref().map(|v| v.mode.clone()),
+            Some(MessageActionsMode::TimeoutDurations)
+        );
+        assert_eq!(app.message_actions_len(), TIMEOUT_DURATIONS.len());
+        // the second row is five minutes
+        if let Some(view) = app.message_actions.as_mut() {
+            view.selected = 1;
+        }
+        let Some(MessageActionOutcome::Run {
+            action, argument, ..
+        }) = app.message_actions_confirm()
+        else {
+            panic!("the duration list should run the timeout");
+        };
+        assert_eq!(action, MessageAction::Timeout);
+        assert_eq!(argument.as_deref(), Some("300"));
+    }
+
+    #[test]
+    fn a_kick_asks_a_second_time_with_the_cursor_on_no() {
+        let mut app = app_with(crate::permissions::VIEW_CHANNEL | crate::permissions::KICK_MEMBERS);
+        app.upsert_message(message("bob"));
+        app.selected_message_index = Some(0);
+        assert!(app.open_message_actions());
+        let index = app
+            .message_actions
+            .as_ref()
+            .unwrap()
+            .actions
+            .iter()
+            .position(|a| *a == MessageAction::Kick)
+            .unwrap();
+        if let Some(view) = app.message_actions.as_mut() {
+            view.selected = index;
+        }
+        assert!(app.message_actions_confirm().is_none());
+        let view = app.message_actions.as_ref().unwrap();
+        assert_eq!(view.mode, MessageActionsMode::Confirm(MessageAction::Kick));
+        assert_eq!(view.selected, 1);
+        // Enter on "No" does nothing and closes the menu
+        assert!(app.message_actions_confirm().is_none());
+        assert!(app.message_actions.is_none());
+    }
+
+    /// The banned-accounts row needs BAN_MEMBERS, and the list it opens
+    /// counts its rows so the cursor can move.
+    #[test]
+    fn the_ban_list_row_needs_the_permission() {
+        let app = app_with(crate::permissions::VIEW_CHANNEL);
+        assert!(!app.community_actions().contains(&CommunityAction::Bans));
+        let mut app = app_with(crate::permissions::VIEW_CHANNEL | crate::permissions::BAN_MEMBERS);
+        assert!(app.community_actions().contains(&CommunityAction::Bans));
+        app.open_communities();
+        app.open_guild_bans("g".into());
+        assert_eq!(app.community_len(), 0);
+        app.set_guild_bans(
+            "g",
+            vec![
+                crate::api::types::GuildBanResponse {
+                    user: user("spammer"),
+                    reason: Some("Advertising".into()),
+                    ..Default::default()
+                },
+                crate::api::types::GuildBanResponse {
+                    user: user("other"),
+                    ..Default::default()
+                },
+            ],
+        );
+        assert_eq!(app.community_len(), 2);
+        app.community_move(1);
+        assert_eq!(
+            app.community_selected_ban().map(|b| b.user.id),
+            Some("other".into())
+        );
+        assert_eq!(app.community_bans_guild().as_deref(), Some("g"));
     }
 }

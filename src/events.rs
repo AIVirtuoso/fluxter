@@ -43,6 +43,14 @@ pub enum AppEvent {
         guild_id: String,
         channels: Vec<ChannelResponse>,
     },
+    GuildBansLoaded {
+        guild_id: String,
+        bans: Vec<crate::api::types::GuildBanResponse>,
+    },
+    GuildBansFailed {
+        guild_id: String,
+        message: String,
+    },
     GuildChannelsFailed {
         guild_id: String,
         message: String,
@@ -1193,6 +1201,12 @@ pub fn apply_event(
         }
         AppEvent::MemberSearchFailed { guild_id, message } => {
             app.set_member_search_failed(&guild_id, message);
+        }
+        AppEvent::GuildBansLoaded { guild_id, bans } => {
+            app.set_guild_bans(&guild_id, bans);
+        }
+        AppEvent::GuildBansFailed { guild_id, message } => {
+            app.set_guild_bans_failed(&guild_id, message);
         }
         AppEvent::GuildMembersLoaded { guild_id, members } => {
             app.set_guild_members(&guild_id, members);

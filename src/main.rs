@@ -2029,6 +2029,24 @@ fn handle_key_event(
                     let guild_id = app.active_guild_id();
                     app.set_status("Revoking…");
                     spawn_delete_invite(client.clone(), event_tx.clone(), invite.code, guild_id);
+                } else if let (Some(ban), Some(guild_id)) =
+                    (app.community_selected_ban(), app.community_bans_guild())
+                {
+                    let name = crate::app::display_name(&ban.user);
+                    app.set_status(format!("Lifting the ban on {name}…"));
+                    spawn_unban(
+                        client.clone(),
+                        event_tx.clone(),
+                        guild_id,
+                        ban.user.id,
+                        name,
+                    );
+                }
+            }
+            KeyCode::Char('R') => {
+                if let Some(guild_id) = app.community_bans_guild() {
+                    app.open_guild_bans(guild_id.clone());
+                    spawn_guild_bans(client.clone(), event_tx.clone(), guild_id);
                 }
             }
             _ => {}
@@ -3943,6 +3961,13 @@ fn run_community_action(
             };
             app.open_guild_report(guild_id);
         }
+        crate::app::CommunityAction::Bans => {
+            let Some(guild_id) = app.active_guild_id() else {
+                return;
+            };
+            app.open_guild_bans(guild_id.clone());
+            spawn_guild_bans(client.clone(), event_tx.clone(), guild_id);
+        }
         crate::app::CommunityAction::Leave => {
             let Some(guild_id) = app.active_guild_id() else {
                 return;
@@ -4657,6 +4682,25 @@ fn spawn_create_channel(
         }
     });
 }
+fn spawn_guild_bans(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+) {
+    tokio::spawn(async move {
+        match client.guild_bans(&guild_id).await {
+            Ok(bans) => {
+                let _ = event_tx.send(AppEvent::GuildBansLoaded { guild_id, bans });
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::GuildBansFailed {
+                    guild_id,
+                    message: format!("Could not read the bans: {err}"),
+                });
+            }
+        }
+    });
+}
 
 /// Change a channel's name, topic or slowmode; CHANNEL_UPDATE brings the
 /// change back over the gateway.
@@ -4693,6 +4737,37 @@ fn spawn_delete_channel(
             }
             Err(err) => {
                 let _ = event_tx.send(AppEvent::ApiError(format!("Failed to delete it: {err}")));
+            }
+        }
+    });
+}
+/// Lift a ban and read the list again, so the row goes without the
+/// overlay keeping a copy of its own.
+fn spawn_unban(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    user_id: String,
+    name: String,
+) {
+    tokio::spawn(async move {
+        match client.unban_member(&guild_id, &user_id).await {
+            Ok(()) => {
+                let _ = event_tx.send(AppEvent::SetStatus(format!("{name} may come back.")));
+                match client.guild_bans(&guild_id).await {
+                    Ok(bans) => {
+                        let _ = event_tx.send(AppEvent::GuildBansLoaded { guild_id, bans });
+                    }
+                    Err(err) => {
+                        let _ = event_tx.send(AppEvent::GuildBansFailed {
+                            guild_id,
+                            message: format!("Could not read the bans: {err}"),
+                        });
+                    }
+                }
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to lift it: {err}")));
             }
         }
     });
@@ -5199,6 +5274,110 @@ fn run_message_action(
                 }
             });
         }
+        MessageAction::Timeout
+        | MessageAction::ClearTimeout
+        | MessageAction::Kick
+        | MessageAction::Ban => {
+            run_moderation_action(app, client, event_tx, action, &message_id, argument);
+        }
+    }
+}
+
+/// The rows that act on a message's author: the timeout, the kick and the
+/// ban. Each needs the community the channel is in and the author's id,
+/// which come from the message the menu was opened on.
+fn run_moderation_action(
+    app: &mut App,
+    client: &FluxerHttpClient,
+    event_tx: &UnboundedSender<AppEvent>,
+    action: MessageAction,
+    message_id: &str,
+    argument: Option<String>,
+) {
+    let Some(guild_id) = app.guild_id_for_active_channel() else {
+        return;
+    };
+    let Some(channel_id) = app.active_channel_id() else {
+        return;
+    };
+    let Some(msg) = app.message_by_id(&channel_id, message_id) else {
+        return;
+    };
+    let user_id = msg.author.id.clone();
+    let name = app.shown_name_for_user(Some(guild_id.as_str()), &msg.author);
+    let client = client.clone();
+    let event_tx = event_tx.clone();
+    match action {
+        MessageAction::Timeout => {
+            // the menu hands over the seconds it offered; the server
+            // wants the moment the timeout ends
+            let seconds: i64 = argument.and_then(|a| a.parse().ok()).unwrap_or(60);
+            let until = (chrono::Utc::now() + chrono::Duration::seconds(seconds))
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            app.set_status(format!("Timing {name} out…"));
+            tokio::spawn(async move {
+                match client
+                    .timeout_member(&guild_id, &user_id, Some(until))
+                    .await
+                {
+                    Ok(()) => {
+                        let _ = event_tx.send(AppEvent::SetStatus(format!("{name} is timed out.")));
+                    }
+                    Err(err) => {
+                        let _ = event_tx.send(AppEvent::ApiError(format!(
+                            "Failed to time them out: {err}"
+                        )));
+                    }
+                }
+            });
+        }
+        MessageAction::ClearTimeout => {
+            app.set_status(format!("Lifting {name}'s timeout…"));
+            tokio::spawn(async move {
+                match client.timeout_member(&guild_id, &user_id, None).await {
+                    Ok(()) => {
+                        let _ =
+                            event_tx.send(AppEvent::SetStatus(format!("{name} can talk again.")));
+                    }
+                    Err(err) => {
+                        let _ =
+                            event_tx.send(AppEvent::ApiError(format!("Failed to lift it: {err}")));
+                    }
+                }
+            });
+        }
+        MessageAction::Kick => {
+            app.set_status(format!("Removing {name}…"));
+            tokio::spawn(async move {
+                match client.kick_member(&guild_id, &user_id).await {
+                    Ok(()) => {
+                        let _ = event_tx.send(AppEvent::SetStatus(format!(
+                            "{name} is out; they can rejoin."
+                        )));
+                    }
+                    Err(err) => {
+                        let _ = event_tx
+                            .send(AppEvent::ApiError(format!("Failed to remove them: {err}")));
+                    }
+                }
+            });
+        }
+        MessageAction::Ban => {
+            app.set_status(format!("Banning {name}…"));
+            tokio::spawn(async move {
+                let body = crate::api::types::CreateGuildBanRequest::default();
+                match client.ban_member(&guild_id, &user_id, &body).await {
+                    Ok(()) => {
+                        let _ = event_tx.send(AppEvent::SetStatus(format!("{name} is banned.")));
+                    }
+                    Err(err) => {
+                        let _ =
+                            event_tx.send(AppEvent::ApiError(format!("Failed to ban them: {err}")));
+                    }
+                }
+            });
+        }
+        _ => {}
     }
 }
 

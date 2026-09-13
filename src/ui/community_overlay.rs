@@ -2,7 +2,7 @@
 //! community's own invites. One overlay in three modes, since each of
 //! them is a list and a cursor.
 
-use crate::app::{App, CommunityMode, DiscoverState, InvitesState};
+use crate::app::{App, BansState, CommunityMode, DiscoverState, InvitesState};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -308,6 +308,62 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 format!(" Report {name} as "),
                 rows,
                 "\u{2191}/\u{2193} move  \u{b7}  Enter send the report  \u{b7}  Esc back"
+                    .to_string(),
+            )
+        }
+        CommunityMode::Bans { guild_id, state } => {
+            let name = app
+                .guilds
+                .iter()
+                .find(|g| &g.id == guild_id)
+                .map(|g| g.name.clone())
+                .unwrap_or_default();
+            let rows = match state {
+                BansState::Loading => vec![Line::from(Span::styled("  Loading…", muted))],
+                BansState::Failed(message) => {
+                    vec![Line::from(Span::styled(format!("  {message}"), muted))]
+                }
+                BansState::Ready(bans) if bans.is_empty() => {
+                    vec![Line::from(Span::styled("  Nobody is banned.", muted))]
+                }
+                BansState::Ready(bans) => bans
+                    .iter()
+                    .enumerate()
+                    .map(|(index, ban)| {
+                        let selected = index == view.selected;
+                        // most bans are permanent and have no expiry; a
+                        // temporary one says when it lifts itself
+                        let until = match ban.expires_at.as_deref() {
+                            Some(expires) => format!(
+                                "until {}",
+                                crate::ui::message_pane::format_timestamp(
+                                    expires,
+                                    app.ui_settings.clock_12h,
+                                )
+                            ),
+                            None => "permanent".to_string(),
+                        };
+                        let reason = ban.reason.as_deref().unwrap_or("no reason recorded");
+                        Line::from(vec![
+                            Span::styled(if selected { " \u{25B8} " } else { "   " }, accent),
+                            Span::styled(
+                                crate::app::display_name(&ban.user),
+                                if selected {
+                                    text.add_modifier(Modifier::BOLD)
+                                } else {
+                                    text
+                                },
+                            ),
+                            Span::styled(format!("   {until}"), dim),
+                            Span::styled(format!("   {reason}"), muted),
+                        ])
+                    })
+                    .collect(),
+            };
+            (
+                format!(" Banned from {name} "),
+                rows,
+                "\u{2191}/\u{2193} move  \u{b7}  x lift the ban  \u{b7}  R reload  \u{b7}  Esc back"
                     .to_string(),
             )
         }
