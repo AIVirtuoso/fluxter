@@ -1010,6 +1010,15 @@ pub enum CommunityMode {
         guild_id: String,
         state: WebhooksState,
     },
+    /// The second press a webhook deletion asks for: its address stops
+    /// working, which is the only way its token is ever revoked. The list
+    /// is kept so "No" goes back to it without another request.
+    ConfirmWebhookDelete {
+        guild_id: String,
+        hooks: Vec<crate::api::types::WebhookResponse>,
+        webhook_id: String,
+        name: String,
+    },
     /// What an invite leads to, looked up before it is taken, so nobody
     /// joins something they cannot see the name of.
     Preview { code: String, state: PreviewState },
@@ -6219,6 +6228,7 @@ impl App {
                 state: WebhooksState::Ready(hooks),
                 ..
             }) => hooks.len(),
+            Some(CommunityMode::ConfirmWebhookDelete { .. }) => 2,
             // nothing to move through while it is still coming, and the
             // preview is one thing rather than a list
             _ => 0,
@@ -7167,6 +7177,56 @@ impl App {
         }
     }
 
+    /// x on a webhook: ask, with the cursor on "No", since deleting it is
+    /// the one way its address is ever revoked. False when there is no
+    /// webhook under the cursor.
+    pub fn ask_webhook_delete(&mut self) -> bool {
+        let Some(view) = self.community.as_ref() else {
+            return false;
+        };
+        let CommunityMode::Webhooks {
+            guild_id,
+            state: WebhooksState::Ready(hooks),
+        } = &view.mode
+        else {
+            return false;
+        };
+        let Some(hook) = hooks.get(view.selected) else {
+            return false;
+        };
+        let mode = CommunityMode::ConfirmWebhookDelete {
+            guild_id: guild_id.clone(),
+            hooks: hooks.clone(),
+            webhook_id: hook.id.clone(),
+            name: hook.name.clone(),
+        };
+        if let Some(view) = &mut self.community {
+            view.mode = mode;
+            view.selected = 1;
+        }
+        true
+    }
+
+    /// The deletion being asked about, and whether the cursor is on "Yes":
+    /// (community, webhook, name, yes).
+    pub fn community_webhook_delete_choice(&self) -> Option<(String, String, String, bool)> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::ConfirmWebhookDelete {
+                guild_id,
+                webhook_id,
+                name,
+                ..
+            } => Some((
+                guild_id.clone(),
+                webhook_id.clone(),
+                name.clone(),
+                view.selected == 0,
+            )),
+            _ => None,
+        }
+    }
+
     /// The address something posts through: the API's own webhook path
     /// with the id and the token in it. It is a credential, so it is
     /// copied and never drawn.
@@ -7186,6 +7246,18 @@ impl App {
         };
         if view.input.is_some() {
             view.input = None;
+            return;
+        }
+        // out of the deletion question, back onto the list it came from
+        if let CommunityMode::ConfirmWebhookDelete {
+            guild_id, hooks, ..
+        } = &view.mode
+        {
+            view.mode = CommunityMode::Webhooks {
+                guild_id: guild_id.clone(),
+                state: WebhooksState::Ready(hooks.clone()),
+            };
+            view.selected = 0;
             return;
         }
         if matches!(view.mode, CommunityMode::Menu) {
@@ -11062,6 +11134,35 @@ mod webhook_tests {
         assert_eq!(
             app.webhook_url(&selected.id, &selected.token),
             "https://api.example.invalid/v1/webhooks/w1/s3cret"
+        );
+    }
+
+    /// x asks with the cursor on "No", and "No" goes back to the list as
+    /// it was, without asking the server for it again.
+    #[test]
+    fn deleting_a_webhook_asks_first_and_no_keeps_the_list() {
+        let mut app = app_with(crate::permissions::MANAGE_WEBHOOKS);
+        app.open_communities();
+        app.open_guild_webhooks("g".into());
+        assert!(!app.ask_webhook_delete());
+        app.set_guild_webhooks("g", vec![hook()]);
+        assert!(app.ask_webhook_delete());
+        assert_eq!(app.community_len(), 2);
+        assert_eq!(
+            app.community_webhook_delete_choice()
+                .map(|(_, id, _, yes)| (id, yes)),
+            Some(("w1".to_string(), false))
+        );
+        app.community_move(-1);
+        assert!(
+            app.community_webhook_delete_choice()
+                .is_some_and(|(_, _, _, yes)| yes)
+        );
+        app.community_back();
+        assert_eq!(app.community_len(), 1);
+        assert_eq!(
+            app.community_selected_webhook().map(|h| h.id),
+            Some("w1".into())
         );
     }
 

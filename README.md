@@ -998,7 +998,7 @@ first three are always there, the last two only inside a community.
 | **Make a community** | Asks for a name and makes it. You are its owner. |
 | **Browse the directory** | The instance's discovery listing. **/** searches it, **Enter** joins straight from the list without an invite. |
 | **Invites to this community** | Every invite you may see. **y** copies its link, **+** makes one to the channel now open, **x** revokes. |
-| **Webhooks in this community** | Every webhook and the channel it posts into. **+** makes one in the channel now open, **r** renames, **y** copies its address, **x** deletes. Needs **Manage Webhooks**. |
+| **Webhooks in this community** | Every webhook and the channel it posts into. **+** makes one in the channel now open, **r** renames, **y** copies its address, **x** deletes after asking. Needs **Manage Webhooks**. |
 | **Leave this community** | Leaves it. A community you own cannot be left, and the client says so rather than sending a call the server would refuse. |
 
 ### An invite is looked up before it is taken
@@ -1023,7 +1023,8 @@ with no account and no permission check. It is not drawn on the screen, and
 it never reaches the debug log either. A test asserts that no row of the
 list contains it.
 
-Deleting a webhook is the only way to revoke one.
+Deleting a webhook is the only way to revoke one, which is why **x** asks
+first, with the cursor on "No".
 
 ## Message formatting
 

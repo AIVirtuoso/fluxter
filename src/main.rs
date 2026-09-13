@@ -2018,22 +2018,10 @@ fn handle_key_event(
                     });
                 }
             }
+            // x asks first: deleting a webhook is the one way its address
+            // is revoked, and it does not come back
             KeyCode::Char('x') | KeyCode::Delete if app.community_selected_webhook().is_some() => {
-                if let (Some(hook), Some(guild_id)) = (
-                    app.community_selected_webhook(),
-                    app.community_webhooks_guild(),
-                ) {
-                    app.set_status(format!("Deleting {}…", hook.name));
-                    spawn_webhook_change(
-                        client.clone(),
-                        event_tx.clone(),
-                        guild_id,
-                        WebhookChange::Delete {
-                            webhook_id: hook.id,
-                            name: hook.name,
-                        },
-                    );
-                }
+                app.ask_webhook_delete();
             }
             KeyCode::Char('+') => {
                 // a new invite is always to the channel now open, which
@@ -3718,6 +3706,21 @@ fn run_community_action(
     client: &FluxerHttpClient,
     event_tx: &UnboundedSender<AppEvent>,
 ) {
+    // the webhook deletion question: Enter on "Yes" deletes, on "No" goes
+    // back to the list
+    if let Some((guild_id, webhook_id, name, yes)) = app.community_webhook_delete_choice() {
+        app.community_back();
+        if yes {
+            app.set_status(format!("Deleting {name}…"));
+            spawn_webhook_change(
+                client.clone(),
+                event_tx.clone(),
+                guild_id,
+                WebhookChange::Delete { webhook_id, name },
+            );
+        }
+        return;
+    }
     // the invite preview: Enter takes it
     if let Some(invite) = app.previewed_invite() {
         let where_ = invite.destination();
