@@ -1242,6 +1242,9 @@ pub struct MessageActionsView {
 pub struct ProfileEditView {
     pub selected: usize,
     pub input: Option<ProfileEditInput>,
+    /// The row x asked to clear, until Enter clears it or any other key
+    /// keeps it.
+    pub confirm_clear: Option<ProfileEditRow>,
 }
 
 /// One row of the profile editor.
@@ -6222,7 +6225,32 @@ impl App {
         self.profile_edit = Some(ProfileEditView {
             selected: 0,
             input: None,
+            confirm_clear: None,
         });
+    }
+
+    /// x on a row that can be cleared: ask, rather than clear. A picture
+    /// or a biography that is gone cannot be got back.
+    pub fn profile_edit_ask_clear(&mut self) {
+        let Some(row) = self.profile_edit_selected_row() else {
+            return;
+        };
+        if !row.clearable() {
+            return;
+        }
+        if let Some(view) = self.profile_edit.as_mut() {
+            view.confirm_clear = Some(row);
+        }
+    }
+
+    /// The row x asked to clear, while the question is open.
+    pub fn profile_edit_clear_pending(&self) -> Option<ProfileEditRow> {
+        self.profile_edit.as_ref()?.confirm_clear
+    }
+
+    /// Close the question, handing back the row it was about.
+    pub fn profile_edit_keep(&mut self) -> Option<ProfileEditRow> {
+        self.profile_edit.as_mut()?.confirm_clear.take()
     }
 
     /// Esc: out of the typing first, then out of the overlay.
@@ -6230,6 +6258,9 @@ impl App {
         let Some(view) = &mut self.profile_edit else {
             return;
         };
+        if view.confirm_clear.take().is_some() {
+            return;
+        }
         if view.input.is_some() {
             view.input = None;
         } else {

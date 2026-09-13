@@ -62,6 +62,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .collect();
 
     let footer = match &view.input {
+        // x asked about a row: the one key that clears it is named, and
+        // every other one keeps it
+        None if view.confirm_clear.is_some() => {
+            let label = view
+                .confirm_clear
+                .map(|row| row.label())
+                .unwrap_or_default();
+            format!("Clear {label}?  \u{b7}  Enter clears it  \u{b7}  any other key keeps it")
+        }
         Some(input) => format!(
             "{}: {}\u{2588}  \u{b7}  Enter save  \u{b7}  Esc cancel",
             input.prompt(),
@@ -187,6 +196,24 @@ mod tests {
         }
         let out = drawn(&app, 80, 12);
         assert!(out.contains("About you (empty clears it): hello"), "{out}");
+    }
+
+    /// x does not clear on its own: the footer asks, and names Enter.
+    #[test]
+    fn x_asks_in_the_footer() {
+        let mut app = app_with_me(UserPrivateResponse {
+            id: "me".into(),
+            bio: Some("counting".into()),
+            ..Default::default()
+        });
+        app.open_profile_edit();
+        app.profile_edit_move(1);
+        app.profile_edit_ask_clear();
+        let out = drawn(&app, 80, 12);
+        assert!(out.contains("Clear About you?"), "{out}");
+        assert!(out.contains("Enter clears it"), "{out}");
+        assert!(app.profile_edit_keep().is_some());
+        assert!(!drawn(&app, 80, 12).contains("Clear About you?"));
     }
 
     /// The reply preference cycles rather than being typed, so its footer

@@ -1029,6 +1029,9 @@ the server asking for your password.
 
 Everything is saved as soon as you press **Enter**, and the gateway's
 `USER_UPDATE` brings the change back to every client you have open.
+**x** on a row does not clear it on its own: the footer asks, **Enter**
+clears it, and any other key keeps what is there, since a cleared picture
+or biography cannot be got back.
 
 **Your online status and the line under your name are slash commands**, not
 rows here: `/status online|idle|dnd|invisible` and `/customstatus <text>`

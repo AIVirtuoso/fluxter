@@ -2139,6 +2139,16 @@ fn handle_key_event(
     }
 
     if app.profile_edit.is_some() {
+        // x asked whether to clear a row: only Enter says yes, and any
+        // other key keeps what is there
+        if app.profile_edit_clear_pending().is_some() {
+            if key.code == KeyCode::Enter {
+                clear_profile_edit_row(app, client, event_tx);
+            } else {
+                app.profile_edit_keep();
+            }
+            return;
+        }
         // typing takes the keys while the footer is asking for a value
         if let Some(input) = app.profile_edit.as_ref().and_then(|v| v.input.clone()) {
             match key.code {
@@ -2170,7 +2180,7 @@ fn handle_key_event(
             KeyCode::Home => app.profile_edit_move(isize::MIN / 2),
             KeyCode::End => app.profile_edit_move(isize::MAX / 2),
             KeyCode::Enter => start_profile_edit_row(app, client, event_tx),
-            KeyCode::Char('x') | KeyCode::Delete => clear_profile_edit_row(app, client, event_tx),
+            KeyCode::Char('x') | KeyCode::Delete => app.profile_edit_ask_clear(),
             _ => {}
         }
         return;
@@ -3107,6 +3117,17 @@ fn handle_key_event(
                 app.api_backoff_clear_guild(&guild_id);
             }
         }
+        // Alt+E = your own profile. Above the plain e below, which checks
+        // no modifier and would take it whenever a message is selected.
+        KeyCode::Char('e') | KeyCode::Char('E')
+            if key.modifiers.contains(KeyModifiers::ALT)
+                && matches!(
+                    app.focus,
+                    Focus::Servers | Focus::Channels | Focus::Messages
+                ) =>
+        {
+            app.open_profile_edit();
+        }
         // e = add reaction
         KeyCode::Char('e')
             if app.focus == Focus::Messages && app.selected_message_index.is_some() =>
@@ -3184,16 +3205,6 @@ fn handle_key_event(
                 }
                 None => app.set_status("Open a community's channel first."),
             }
-        }
-        // Alt+E = your own profile
-        KeyCode::Char('e') | KeyCode::Char('E')
-            if key.modifiers.contains(KeyModifiers::ALT)
-                && matches!(
-                    app.focus,
-                    Focus::Servers | Focus::Channels | Focus::Messages
-                ) =>
-        {
-            app.open_profile_edit();
         }
         // Alt+F = friends, requests and blocked accounts
         KeyCode::Char('f') | KeyCode::Char('F')
@@ -3989,7 +4000,9 @@ fn start_profile_edit_row(
     }
 }
 
-/// x on a profile row: the explicit null the server wants to clear it.
+/// Enter after x on a profile row: the explicit null the server wants to
+/// clear it. A cleared picture or biography cannot be got back, which is
+/// why x alone only asks.
 fn clear_profile_edit_row(
     app: &mut App,
     client: &FluxerHttpClient,
@@ -3997,7 +4010,7 @@ fn clear_profile_edit_row(
 ) {
     use crate::api::types::ModifyCurrentUserRequest;
     use crate::app::ProfileEditRow;
-    let Some(row) = app.profile_edit_selected_row() else {
+    let Some(row) = app.profile_edit_keep() else {
         return;
     };
     if !row.clearable() {
@@ -6181,5 +6194,134 @@ mod colour_tests {
         assert_eq!(parse_hex_colour("#1234567"), None);
         assert_eq!(parse_hex_colour("blue"), None);
         assert_eq!(parse_hex_colour("#12345g"), None);
+    }
+}
+
+/// The profile editor's keys, pressed with a message selected: that is
+/// when the plain `e` (reaction picker) arm matches, so an Alt+E arm placed
+/// below it would never run.
+#[cfg(test)]
+mod profile_edit_key_tests {
+    use super::*;
+    use crate::api::types::{
+        CHANNEL_GUILD_TEXT, ChannelResponse, GuildResponse, MessageResponse, UserPartialResponse,
+        UserPrivateResponse,
+    };
+    use crate::app::{ProfileEditRow, ServerSelection};
+
+    struct Harness {
+        app: App,
+        client: FluxerHttpClient,
+        event_tx: UnboundedSender<AppEvent>,
+        gateway_tx: UnboundedSender<GatewayCommand>,
+        config: AppConfig,
+        path: std::path::PathBuf,
+        _events: tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+        _commands: tokio::sync::mpsc::UnboundedReceiver<GatewayCommand>,
+    }
+
+    fn harness() -> Harness {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            bio: Some("counting".into()),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: "me".into(),
+            ..Default::default()
+        };
+        let channel = ChannelResponse {
+            id: "c".into(),
+            kind: CHANNEL_GUILD_TEXT,
+            name: "general".into(),
+            guild_id: Some("g".into()),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            Default::default(),
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            Some("c".into()),
+            Default::default(),
+        );
+        app.set_guild_channels("g", vec![channel]);
+        app.upsert_message(MessageResponse {
+            id: "1".into(),
+            channel_id: "c".into(),
+            author: UserPartialResponse {
+                id: "bob".into(),
+                username: "bob".into(),
+                ..Default::default()
+            },
+            content: "hello".into(),
+            timestamp: "2026-09-13T10:00:00.000Z".into(),
+            ..Default::default()
+        });
+        app.focus = Focus::Messages;
+        app.selected_message_index = Some(0);
+        let (event_tx, _events) = tokio::sync::mpsc::unbounded_channel();
+        let (gateway_tx, _commands) = tokio::sync::mpsc::unbounded_channel();
+        Harness {
+            app,
+            client: FluxerHttpClient::new("https://example.invalid").unwrap(),
+            event_tx,
+            gateway_tx,
+            config: AppConfig::default(),
+            path: std::path::PathBuf::from("/nonexistent/config.toml"),
+            _events,
+            _commands,
+        }
+    }
+
+    fn press(h: &mut Harness, code: KeyCode, modifiers: KeyModifiers) {
+        handle_key_event(
+            &mut h.app,
+            KeyEvent::new(code, modifiers),
+            &h.client,
+            &h.event_tx,
+            &h.gateway_tx,
+            &h.path,
+            &mut h.config,
+        );
+    }
+
+    #[test]
+    fn alt_e_opens_the_editor_even_with_a_message_selected() {
+        let mut h = harness();
+        press(&mut h, KeyCode::Char('e'), KeyModifiers::ALT);
+        assert!(h.app.profile_edit.is_some());
+        assert!(h.app.reaction_target.is_none());
+    }
+
+    #[test]
+    fn plain_e_still_opens_the_reaction_picker() {
+        let mut h = harness();
+        press(&mut h, KeyCode::Char('e'), KeyModifiers::NONE);
+        assert!(h.app.profile_edit.is_none());
+        assert!(h.app.reaction_target.is_some());
+    }
+
+    /// x asks; anything but Enter keeps the row as it was.
+    #[test]
+    fn x_asks_before_clearing_and_any_other_key_keeps_it() {
+        let mut h = harness();
+        press(&mut h, KeyCode::Char('e'), KeyModifiers::ALT);
+        press(&mut h, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(h.app.profile_edit_selected_row(), Some(ProfileEditRow::Bio));
+        press(&mut h, KeyCode::Char('x'), KeyModifiers::NONE);
+        assert_eq!(
+            h.app.profile_edit_clear_pending(),
+            Some(ProfileEditRow::Bio)
+        );
+        press(&mut h, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(h.app.profile_edit_clear_pending(), None);
+        // the editor is still open and the row untouched
+        assert!(h.app.profile_edit.is_some());
+        assert_eq!(h.app.me.bio.as_deref(), Some("counting"));
     }
 }

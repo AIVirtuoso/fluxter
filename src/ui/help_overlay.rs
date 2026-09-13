@@ -62,7 +62,7 @@ Focus & navigation
 Yourself
   Alt+E - your own profile: display name, about you, pronouns, accent colour,
            picture (a path to a file), and what happens when somebody replies to
-           you. Enter changes a row, x clears it, Esc closes.
+           you. Enter changes a row, x asks and Enter clears it, Esc closes.
   /status online|idle|dnd|invisible - your online status
   /customstatus <text> - the line under your name (alone clears it)
 
