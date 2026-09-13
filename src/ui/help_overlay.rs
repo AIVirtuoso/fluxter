@@ -59,6 +59,11 @@ Focus & navigation
            [media] voice_command, and the menu says plainly when there is none
            (see README, "Voice").
 
+Your account
+  Alt+Z - where you are signed in: every live session, what it is, where it was
+           last seen and when. R reloads. Ending one needs your password, which
+           this client never holds, so that is done in the web client.
+
 Servers (left column)
   Up / Down / j / k - move server selection
   n - notification settings for the selected community

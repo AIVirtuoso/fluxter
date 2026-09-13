@@ -1672,6 +1672,62 @@ pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
 /// forward of it, whose content arrives as `message_snapshots`.
 pub const MESSAGE_REFERENCE_REPLY: i32 = 0;
 pub const MESSAGE_REFERENCE_FORWARD: i32 = 1;
+/// Roughly where a session's address is, as the server guesses it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClientLocationResponse {
+    #[serde(default)]
+    pub city: Option<String>,
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
+    pub country: Option<String>,
+}
+
+impl ClientLocationResponse {
+    /// City, region and country, whichever of them the server knew.
+    pub fn label(&self) -> String {
+        [
+            self.city.as_deref(),
+            self.region.as_deref(),
+            self.country.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
+    }
+}
+
+/// What the server worked out about the client that made a session.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClientInfoResponse {
+    #[serde(default)]
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub os: Option<String>,
+    #[serde(default)]
+    pub browser: Option<String>,
+    #[serde(default)]
+    pub device: String,
+    #[serde(default)]
+    pub location: Option<ClientLocationResponse>,
+}
+
+/// One live sign-in of the account. `id_hash` is the only identifier the
+/// API exposes, and `current` is false on every entry -- a client that
+/// wants to know which one is its own hashes its own token.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuthSessionResponse {
+    #[serde(default)]
+    pub id_hash: String,
+    #[serde(default)]
+    pub client_info: Option<ClientInfoResponse>,
+    #[serde(default)]
+    pub masked_ip: Option<String>,
+    #[serde(default)]
+    pub approx_last_used_at: Option<String>,
+}
 
 /// One entry of `GET /channels/{id}/messages/pins`: the message and when
 /// it was pinned (which is not the message's own timestamp).

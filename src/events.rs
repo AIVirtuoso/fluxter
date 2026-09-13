@@ -17,6 +17,12 @@ pub enum AppEvent {
         kind: String,
         payload: Value,
     },
+    SessionsLoaded {
+        sessions: Vec<crate::api::types::AuthSessionResponse>,
+    },
+    SessionsFailed {
+        message: String,
+    },
     GuildChannelsLoaded {
         guild_id: String,
         channels: Vec<ChannelResponse>,
@@ -1153,6 +1159,12 @@ pub fn apply_event(
             app.loading_channels.remove(&guild_id);
             app.api_backoff_after_failure(format!("channels:{guild_id}"));
             app.set_status(message);
+        }
+        AppEvent::SessionsLoaded { sessions } => {
+            app.set_sessions_loaded(sessions);
+        }
+        AppEvent::SessionsFailed { message } => {
+            app.set_sessions_failed(message);
         }
         AppEvent::GuildMembersLoaded { guild_id, members } => {
             app.set_guild_members(&guild_id, members);
