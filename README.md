@@ -827,6 +827,19 @@ useful rather than annoying:
 - **A channel you have never opened gets none.** A rule above the whole
   history says nothing, and would cost a row saying it.
 
+### Communities you are not looking at
+
+A session is **passive** in a community of more than 250 members until it
+marks that community active, and only the open one is marked active -- the
+same as the web client, and the reason a big community does not flood the
+connection with every message in it. A passive community does not send its
+messages; it sends a digest every 30 seconds of which channels have
+something newer and which voice states changed. The client reads those
+now, so the badges of a big community you are not looking at keep up on
+their own, and somebody joining or leaving a voice channel there shows
+without opening it. Under 250 members nothing is passive and everything
+arrives as it happens.
+
 ## Knowing what to press
 
 Two places say what the keys do, and neither needs **F1**:

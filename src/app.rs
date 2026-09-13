@@ -3957,6 +3957,22 @@ impl App {
         Some(removed.id)
     }
 
+    /// Take one ping off the list because it is gone from the server's:
+    /// another client dismissed it, or the message itself was deleted.
+    pub fn pings_drop_message(&mut self, message_id: &str) {
+        let Some(view) = self.pings.as_mut() else {
+            return;
+        };
+        let PingsState::Ready(messages) = &mut view.state else {
+            return;
+        };
+        let before = messages.len();
+        messages.retain(|m| m.id != message_id);
+        if messages.len() != before && view.selected >= messages.len() {
+            view.selected = messages.len().saturating_sub(1);
+        }
+    }
+
     /// Empty the list; the ids, for the server.
     pub fn pings_take_all(&mut self) -> Vec<String> {
         let Some(view) = self.pings.as_mut() else {
