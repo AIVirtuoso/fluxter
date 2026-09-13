@@ -14,6 +14,7 @@ pub mod image_preview;
 pub mod input_bar;
 pub(crate) mod input_word_wrap;
 pub mod member_pane;
+pub mod member_search;
 pub mod mention_popup;
 pub mod message_actions;
 pub mod message_markdown;
@@ -148,6 +149,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         message_actions::render(frame, area, app);
     } else if app.sessions.is_some() {
         sessions_overlay::render(frame, area, app);
+    } else if app.member_search.is_some() {
+        member_search::render(frame, area, app);
     } else if app.search.is_some() {
         search_overlay::render(frame, area, app);
     } else if app.conversation.is_some() {

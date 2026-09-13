@@ -63,6 +63,10 @@ Your account
   Alt+Z - where you are signed in: every live session, what it is, where it was
            last seen and when. R reloads. Ending one needs your password, which
            this client never holds, so that is done in the web client.
+Finding people
+  Alt+R - find a member of the open community by name, through the server's
+           member index: Enter searches, u opens a profile, d starts a
+           conversation. Needs one of the moderator permissions there.
 
 Servers (left column)
   Up / Down / j / k - move server selection

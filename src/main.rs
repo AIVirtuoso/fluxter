@@ -2195,6 +2195,52 @@ fn handle_key_event(
         }
         return;
     }
+    if app.member_search.is_some() {
+        match key.code {
+            KeyCode::Esc => app.dismiss_member_search(),
+            KeyCode::Enter => {
+                if let Some((guild_id, query)) = app.member_search_start() {
+                    spawn_member_search(client.clone(), event_tx.clone(), guild_id, query);
+                }
+            }
+            KeyCode::Up => app.member_search_move(-1),
+            KeyCode::Down => app.member_search_move(1),
+            KeyCode::Backspace => {
+                if let Some(view) = app.member_search.as_mut() {
+                    view.query.pop();
+                }
+            }
+            // u and d act on the match under the cursor, so they are only
+            // typed into the query while there is no match to act on
+            KeyCode::Char('u') if app.member_search_selected().is_some() => {
+                if let Some(member) = app.member_search_selected() {
+                    let guild_id = app.member_search.as_ref().map(|v| v.guild_id.clone());
+                    let (user_id, guild_id) =
+                        app.open_profile_of_user(member.as_partial_user(), guild_id);
+                    spawn_profile_load(client.clone(), event_tx.clone(), user_id, guild_id);
+                }
+            }
+            KeyCode::Char('d') if app.member_search_selected().is_some() => {
+                if let Some(member) = app.member_search_selected() {
+                    app.dismiss_member_search();
+                    app.set_status(format!(
+                        "Opening a conversation with {}…",
+                        member.shown_name()
+                    ));
+                    spawn_create_dm(client.clone(), event_tx.clone(), vec![member.user_id]);
+                }
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(view) = app.member_search.as_mut()
+                    && view.query.chars().count() < 100
+                {
+                    view.query.push(c);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
 
     if app.pins.is_some() {
         match key.code {
@@ -3108,6 +3154,24 @@ fn handle_key_event(
                     .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
         {
             copy_selected_message(app);
+        }
+        // Alt+R = find a member of this community. Above the plain r
+        // below, which has no modifier guard and would take it whenever a
+        // message is selected.
+        KeyCode::Char('r') | KeyCode::Char('R')
+            if key.modifiers.contains(KeyModifiers::ALT)
+                && matches!(
+                    app.focus,
+                    Focus::Servers | Focus::Channels | Focus::Messages
+                ) =>
+        {
+            match app.open_member_search() {
+                Some(true) => {}
+                Some(false) => app.set_status(
+                    "Finding members needs one of the moderator permissions in this community.",
+                ),
+                None => app.set_status("Open a community first."),
+            }
         }
         // r = reply mode
         KeyCode::Char('r')
@@ -5012,6 +5076,31 @@ fn spawn_sessions_load(client: FluxerHttpClient, event_tx: UnboundedSender<AppEv
         }
     });
 }
+/// Search the community's member index. An index still being built comes
+/// back as an answer rather than an error, and the overlay says so.
+fn spawn_member_search(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    query: String,
+) {
+    tokio::spawn(async move {
+        match client.search_guild_members(&guild_id, &query, 50).await {
+            Ok(response) => {
+                let _ = event_tx.send(AppEvent::MemberSearchResults {
+                    guild_id,
+                    response: Box::new(response),
+                });
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::MemberSearchFailed {
+                    guild_id,
+                    message: format!("The search failed: {err}"),
+                });
+            }
+        }
+    });
+}
 
 fn spawn_profile_load(
     client: FluxerHttpClient,
@@ -6240,5 +6329,102 @@ mod key_arm_tests {
         assert!(h.app.member_list.is_some());
         assert!(h.app.voice_menu.is_none());
         assert!(h.app.community.is_none());
+    }
+}
+
+/// Alt+R has to sit above the plain `r` (reply) and `R` (refresh) arms,
+/// neither of which checks the modifiers, or it never runs while their
+/// guards hold: rustc only warns about an unreachable arm when the one
+/// above it matches every value of the same key, which these do not.
+#[cfg(test)]
+mod member_search_key_tests {
+    use super::*;
+    use crate::api::types::{
+        CHANNEL_GUILD_TEXT, ChannelResponse, GuildResponse, MessageResponse, UserPartialResponse,
+        UserPrivateResponse,
+    };
+    use crate::app::ServerSelection;
+
+    /// A community with a channel open and one message in it, selected:
+    /// the state in which the plain r (reply) arm matches, which is when
+    /// an Alt+R arm placed below it would never run.
+    fn harness(permissions: u64) -> (App, FluxerHttpClient, AppConfig) {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: "olive".into(),
+            permissions: Some(permissions.to_string()),
+            ..Default::default()
+        };
+        let channel = ChannelResponse {
+            id: "c".into(),
+            kind: CHANNEL_GUILD_TEXT,
+            name: "general".into(),
+            guild_id: Some("g".into()),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            Default::default(),
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            Some("c".into()),
+            Default::default(),
+        );
+        app.set_guild_channels("g", vec![channel]);
+        app.upsert_message(MessageResponse {
+            id: "1".into(),
+            channel_id: "c".into(),
+            author: UserPartialResponse {
+                id: "bob".into(),
+                username: "bob".into(),
+                ..Default::default()
+            },
+            content: "hello".into(),
+            timestamp: "2026-09-13T10:00:00.000Z".into(),
+            ..Default::default()
+        });
+        app.focus = Focus::Messages;
+        app.selected_message_index = Some(0);
+        (
+            app,
+            FluxerHttpClient::new("https://example.invalid").unwrap(),
+            AppConfig::default(),
+        )
+    }
+
+    #[test]
+    fn alt_r_finds_members_and_plain_r_still_refreshes() {
+        let (mut app, client, mut config) = harness(crate::permissions::KICK_MEMBERS);
+        let (event_tx, _events) = tokio::sync::mpsc::unbounded_channel();
+        let (gateway_tx, _commands) = tokio::sync::mpsc::unbounded_channel();
+        let path = std::path::PathBuf::from("/nonexistent/config.toml");
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT),
+            &client,
+            &event_tx,
+            &gateway_tx,
+            &path,
+            &mut config,
+        );
+        assert!(app.member_search.is_some());
+        app.dismiss_member_search();
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE),
+            &client,
+            &event_tx,
+            &gateway_tx,
+            &path,
+            &mut config,
+        );
+        assert!(app.member_search.is_none());
     }
 }
