@@ -7345,19 +7345,39 @@ fn send_recording(app: &mut App, client: &FluxerHttpClient, event_tx: &Unbounded
         app.cancel_recording();
         return;
     };
-    let Some(staged) = app.finish_recording() else {
+    let Some(recording) = app.finish_recording() else {
         return;
     };
-    let secs = staged
-        .voice
-        .as_ref()
-        .map(|v| v.duration_secs)
-        .unwrap_or_default();
+    let reply = voice_reply_reference(app);
     app.set_status(format!(
         "Sending {} of voice…",
-        crate::media::format_duration(secs)
+        crate::media::format_duration(recording.elapsed_secs)
     ));
-    spawn_send_voice_message(client.clone(), event_tx.clone(), channel_id, staged);
+    spawn_send_voice_message(
+        client.clone(),
+        event_tx.clone(),
+        channel_id,
+        recording,
+        reply,
+    );
+}
+
+/// The reply a voice message goes as, when one was open: the reply mode
+/// ends with the send, the way it does for a typed message. A forward
+/// cannot carry a recording, so forward mode is simply left.
+fn voice_reply_reference(app: &mut App) -> Option<MessageReferenceRequest> {
+    let reply = app.reply_to.take();
+    let forward = app.forward_mode;
+    app.cancel_reply();
+    if forward {
+        return None;
+    }
+    reply.map(|r| MessageReferenceRequest {
+        message_id: r.message_id,
+        channel_id: Some(r.channel_id),
+        guild_id: r.source_guild_id,
+        reference_type: Some(crate::api::types::MESSAGE_REFERENCE_REPLY),
+    })
 }
 
 /// A voice message goes its own way rather than through the compose box:
@@ -7367,9 +7387,34 @@ fn spawn_send_voice_message(
     client: FluxerHttpClient,
     event_tx: UnboundedSender<AppEvent>,
     channel_id: String,
-    staged: crate::media::StagedAttachment,
+    recording: crate::media::record::Recording,
+    reply: Option<MessageReferenceRequest>,
 ) {
     tokio::spawn(async move {
+        // the shape may mean decoding the file, so it is read off the
+        // drawing thread; what the recorder wrote decides the name and type
+        let staged = match tokio::task::spawn_blocking(move || {
+            crate::media::StagedAttachment::voice_message(recording)
+        })
+        .await
+        {
+            Ok(staged) => staged,
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!(
+                    "Could not read the recording: {err}"
+                )));
+                return;
+            }
+        };
+        debug::log(
+            "voice",
+            format!(
+                "{} of {} bytes, {} s",
+                staged.content_type,
+                staged.bytes.len(),
+                staged.voice.as_ref().map(|v| v.duration_secs).unwrap_or(0)
+            ),
+        );
         let uploaded = match client
             .upload_attachments(&channel_id, std::slice::from_ref(&staged))
             .await
@@ -7392,7 +7437,7 @@ fn spawn_send_voice_message(
             nonce: Some(nonce),
             flags: Some(crate::api::types::MESSAGE_FLAG_VOICE_MESSAGE as u32),
             tts: None,
-            message_reference: None,
+            message_reference: reply,
             attachments: Some(uploaded),
             sticker_ids: None,
         };
@@ -8630,5 +8675,126 @@ mod member_search_key_tests {
             &mut config,
         );
         assert!(app.member_search.is_none());
+    }
+}
+
+/// A voice message recorded while a reply is open goes as that reply, and
+/// the box says it is recording rather than "Replying to".
+#[cfg(test)]
+mod voice_reply_tests {
+    use super::*;
+    use crate::api::types::{
+        CHANNEL_GUILD_TEXT, ChannelResponse, GuildResponse, MessageResponse, UserPartialResponse,
+        UserPrivateResponse,
+    };
+    use crate::app::ServerSelection;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn app_with_a_message() -> App {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: "me".into(),
+            ..Default::default()
+        };
+        let channel = ChannelResponse {
+            id: "c".into(),
+            kind: CHANNEL_GUILD_TEXT,
+            name: "general".into(),
+            guild_id: Some("g".into()),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            Default::default(),
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            Some("c".into()),
+            Default::default(),
+        );
+        app.set_guild_channels("g", vec![channel]);
+        app.upsert_message(MessageResponse {
+            id: "1".into(),
+            channel_id: "c".into(),
+            author: UserPartialResponse {
+                id: "bob".into(),
+                username: "bob".into(),
+                ..Default::default()
+            },
+            content: "hello".into(),
+            timestamp: "2026-09-13T10:00:00.000Z".into(),
+            ..Default::default()
+        });
+        app.focus = Focus::Messages;
+        app.selected_message_index = Some(0);
+        app
+    }
+
+    #[test]
+    fn a_recording_started_while_replying_goes_as_the_reply() {
+        let mut app = app_with_a_message();
+        // a recorder that records nothing but exists: enough to be running
+        app.recorder_cmd = "sleep 1000".to_string();
+        app.start_reply();
+        assert!(app.reply_to.is_some());
+        assert_eq!(app.focus, Focus::Input);
+        let (event_tx, _events) = tokio::sync::mpsc::unbounded_channel();
+        let (gateway_tx, _commands) = tokio::sync::mpsc::unbounded_channel();
+        let client = FluxerHttpClient::new("https://example.invalid").unwrap();
+        let mut config = AppConfig::default();
+        let path = std::path::PathBuf::from("/nonexistent/config.toml");
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &client,
+            &event_tx,
+            &gateway_tx,
+            &path,
+            &mut config,
+        );
+        assert!(app.recorder.is_some(), "{}", app.status_message);
+        assert!(
+            app.status_message.contains("reply to bob"),
+            "{}",
+            app.status_message
+        );
+
+        // the box says so too, instead of "Replying to"
+        let mut t = Terminal::new(TestBackend::new(100, 6)).unwrap();
+        t.draw(|f| {
+            crate::ui::input_bar::render(f, f.area(), &app);
+        })
+        .unwrap();
+        let buf = t.backend().buffer().clone();
+        let screen: String = (0..6)
+            .map(|y| {
+                (0..100)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            screen.contains("Recording a voice message as a reply to bob"),
+            "{screen}"
+        );
+
+        // and the send carries the reply, ending the reply mode
+        let reference = voice_reply_reference(&mut app).expect("the reply goes with it");
+        assert_eq!(reference.message_id, "1");
+        assert_eq!(reference.channel_id.as_deref(), Some("c"));
+        assert_eq!(
+            reference.reference_type,
+            Some(crate::api::types::MESSAGE_REFERENCE_REPLY)
+        );
+        assert!(app.reply_to.is_none());
+        app.cancel_recording();
     }
 }

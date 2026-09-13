@@ -182,14 +182,17 @@ pub struct MediaSettings {
     pub voice_command: String,
     /// The program that records a voice message (whitespace-separated).
     /// `{file}` is where the recording goes, and a command that names no
-    /// `{file}` gets the path appended. Empty picks the first of
-    /// pw-record, parecord and arecord on PATH, each asked for mono
-    /// 16 kHz WAV -- the format whose length and levels the client can
-    /// read back without decoding anything.
+    /// `{file}` gets the path appended; the file ends in `.ogg` when the
+    /// command speaks of ffmpeg, ogg or opus and `.wav` otherwise, which
+    /// is how ffmpeg picks its container. Empty picks ffmpeg on PATH,
+    /// capturing from PipeWire or PulseAudio (alsa on a bare console)
+    /// straight to Ogg Opus, else the first of pw-record, parecord and
+    /// arecord, each asked for mono 16 kHz WAV. What the recorder wrote is
+    /// read off its first bytes, so a command may write either.
     ///
     /// ```toml
     /// [media]
-    /// recorder_command = "arecord -q -t wav -f S16_LE -r 16000 -c 1 {file}"
+    /// recorder_command = "ffmpeg -loglevel error -y -f pulse -i default -ac 1 -c:a libopus -b:a 24k {file}"
     /// ```
     #[serde(default)]
     pub recorder_command: String,

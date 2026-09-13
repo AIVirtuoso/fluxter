@@ -4632,7 +4632,7 @@ impl App {
         }
         let Some(argv) = crate::media::record::recorder_command(&self.recorder_cmd) else {
             self.set_status(
-                "No recorder on PATH: install pw-record, parecord or arecord, or set [media] recorder_command.",
+                "No recorder on PATH: install ffmpeg (Ogg Opus), or pw-record, parecord or arecord (WAV), or set [media] recorder_command.",
             );
             return false;
         };
@@ -4640,7 +4640,13 @@ impl App {
             Ok(recorder) => {
                 crate::debug::log("voice", format!("recording with {}", recorder.program));
                 self.recorder = Some(recorder);
-                self.set_status("Recording: Ctrl+R sends it, Esc throws it away.");
+                self.set_status(match self.reply_to.as_ref() {
+                    Some(reply) => format!(
+                        "Recording a reply to {}: Ctrl+R sends it, Esc throws it away.",
+                        reply.author_name
+                    ),
+                    None => "Recording: Ctrl+R sends it, Esc throws it away.".to_string(),
+                });
                 true
             }
             Err(err) => {
@@ -4655,27 +4661,22 @@ impl App {
         self.recorder.as_ref().map(|r| r.elapsed_secs())
     }
 
-    /// Stop the recorder and hand over what it wrote, as the attachment a
-    /// voice message is made of. None when nothing came back.
-    pub fn finish_recording(&mut self) -> Option<crate::media::StagedAttachment> {
+    /// Stop the recorder and hand over what it wrote, with how long it
+    /// ran. The shape is read later, off the drawing thread, since an Ogg
+    /// is decoded for its levels. None when nothing came back.
+    pub fn finish_recording(&mut self) -> Option<crate::media::record::Recording> {
         let recorder = self.recorder.take()?;
-        let seconds = recorder.elapsed_secs();
-        let bytes = match recorder.finish() {
-            Ok(bytes) if bytes.len() > 44 => bytes,
+        match recorder.finish() {
+            Ok(recording) if recording.bytes.len() > 44 => Some(recording),
             Ok(_) => {
                 self.set_status("The recording came back empty.");
-                return None;
+                None
             }
             Err(err) => {
                 self.set_status(format!("Could not read the recording: {err}"));
-                return None;
+                None
             }
-        };
-        // a configured recorder may write something this client cannot
-        // read back; the length it was recording for still stands
-        let shape = crate::media::record::wav_shape(&bytes)
-            .unwrap_or_else(|| crate::media::record::flat_shape(seconds));
-        Some(crate::media::StagedAttachment::voice_message(bytes, shape))
+        }
     }
 
     pub fn cancel_recording(&mut self) {

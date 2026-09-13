@@ -2,9 +2,11 @@
 //! and what to do with the result; a program on PATH does the recording,
 //! the same division as playing audio and carrying a call.
 //!
-//! Every recorder here writes a WAV file, mono at 16 kHz, which is the
-//! cheapest thing that carries a voice and the one format whose duration
-//! and levels can be read back without decoding anything.
+//! The recorder of choice is ffmpeg, which captures from the microphone
+//! and writes Ogg Opus straight away -- the format the web client records
+//! in, at a fraction of the bytes -- and is already one of the programs
+//! this client uses. Where it is missing, pw-record, parecord and arecord
+//! write mono 16 kHz WAV, which is read back without decoding anything.
 
 use std::ffi::OsStr;
 use std::io;
@@ -12,8 +14,31 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 /// Recorders tried in turn when no command is configured. `{file}` is
-/// where the recording goes.
+/// where the recording goes; `{capture}` is the microphone's side, pulse
+/// (which PipeWire answers to as well) or alsa on a bare console. Opus is
+/// asked for at 48 kHz mono, 32 kbit/s, the voice profile.
 const RECORDERS: &[&[&str]] = &[
+    &[
+        "ffmpeg",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "{capture}",
+        "-i",
+        "default",
+        "-ac",
+        "1",
+        "-ar",
+        "48000",
+        "-c:a",
+        "libopus",
+        "-b:a",
+        "32k",
+        "-application",
+        "voip",
+        "{file}",
+    ],
     &["pw-record", "--rate=16000", "--channels=1", "{file}"],
     &[
         "parecord",
@@ -33,7 +58,39 @@ const RECORDERS: &[&[&str]] = &[
 /// is a real state the status line says out loud.
 pub fn recorder_command(configured: &str) -> Option<Vec<String>> {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    recorder_command_in(configured, &path)
+    let argv = recorder_command_in(configured, &path)?;
+    let capture = capture_input();
+    Some(
+        argv.into_iter()
+            .map(|part| part.replace("{capture}", capture))
+            .collect(),
+    )
+}
+
+/// Which side ffmpeg captures from: pulse where a PipeWire or PulseAudio
+/// socket is in the runtime directory, which is every desktop session,
+/// and alsa on a bare console with neither.
+pub fn capture_input() -> &'static str {
+    let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") else {
+        return "alsa";
+    };
+    let runtime = Path::new(&runtime);
+    if runtime.join("pipewire-0").exists() || runtime.join("pulse").exists() {
+        "pulse"
+    } else {
+        "alsa"
+    }
+}
+
+/// The extension the recording file gets, which is what ffmpeg picks its
+/// container by: `.ogg` for a command that speaks of ffmpeg, ogg or opus,
+/// `.wav` for the rest.
+pub fn file_suffix(argv: &[String]) -> &'static str {
+    let ogg = argv.iter().any(|part| {
+        let p = part.to_ascii_lowercase();
+        p.ends_with("ffmpeg") || p.contains("ogg") || p.contains("opus")
+    });
+    if ogg { ".ogg" } else { ".wav" }
 }
 
 fn recorder_command_in(configured: &str, path: &OsStr) -> Option<Vec<String>> {
@@ -99,7 +156,7 @@ impl Recorder {
     pub fn start(argv: &[String]) -> io::Result<Self> {
         let file = tempfile::Builder::new()
             .prefix("fluxter-voice-")
-            .suffix(".wav")
+            .suffix(file_suffix(argv))
             .tempfile()?;
         let argv = fill_file(argv, file.path());
         let (program, args) = argv
@@ -124,10 +181,13 @@ impl Recorder {
     }
 
     /// Ask the recorder to finish, wait for it, and hand back what it
-    /// wrote. **Termination has to be polite**: a WAV header carries the
-    /// data length, and every recorder here writes it on close, so a
-    /// SIGKILL leaves a file whose header says zero bytes.
-    pub fn finish(mut self) -> io::Result<Vec<u8>> {
+    /// wrote with how long it ran. **Termination has to be polite**: a
+    /// WAV header carries the data length and an Ogg its last page, and
+    /// every recorder here writes them on a SIGTERM (ffmpeg then exits
+    /// 255, which is how it reports the signal, with the file whole), so
+    /// a SIGKILL leaves a file that says nothing about its length.
+    pub fn finish(mut self) -> io::Result<Recording> {
+        let elapsed_secs = self.elapsed_secs();
         #[cfg(unix)]
         unsafe {
             libc::kill(self.child.id() as i32, libc::SIGTERM);
@@ -135,7 +195,10 @@ impl Recorder {
         #[cfg(not(unix))]
         let _ = self.child.kill();
         let _ = self.child.wait();
-        std::fs::read(self.file.path())
+        Ok(Recording {
+            bytes: std::fs::read(self.file.path())?,
+            elapsed_secs,
+        })
     }
 
     /// Stop and throw away what was recorded.
@@ -148,6 +211,152 @@ impl Recorder {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// What a recorder wrote, and how long it was running: the length to fall
+/// back on when the file does not say.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Recording {
+    pub bytes: Vec<u8>,
+    pub elapsed_secs: i64,
+}
+
+/// The container a recording turned out to be, read off its first bytes
+/// rather than trusted from the command: a configured recorder writes
+/// what it likes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Container {
+    Wav,
+    Ogg,
+    Unknown,
+}
+
+impl Container {
+    pub fn of(bytes: &[u8]) -> Self {
+        if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE" {
+            Self::Wav
+        } else if bytes.starts_with(b"OggS") {
+            Self::Ogg
+        } else {
+            Self::Unknown
+        }
+    }
+
+    pub fn filename(self) -> &'static str {
+        match self {
+            Self::Wav => "voice-message.wav",
+            Self::Ogg => "voice-message.ogg",
+            Self::Unknown => "voice-message",
+        }
+    }
+
+    pub fn content_type(self) -> &'static str {
+        match self {
+            Self::Wav => "audio/wav",
+            Self::Ogg => "audio/ogg",
+            Self::Unknown => "application/octet-stream",
+        }
+    }
+}
+
+impl Recording {
+    /// The recording's shape: read out of a WAV directly; for an Ogg the
+    /// length from its last page and the levels by decoding it with
+    /// ffmpeg, flat where ffmpeg is not there; for anything else the time
+    /// it was recording for and a flat line. Blocking on the decode, so
+    /// call it off the drawing thread.
+    pub fn shape(&self) -> VoiceShape {
+        match Container::of(&self.bytes) {
+            Container::Wav => {
+                wav_shape(&self.bytes).unwrap_or_else(|| flat_shape(self.elapsed_secs))
+            }
+            Container::Ogg => {
+                let duration_secs = ogg_duration_secs(&self.bytes).unwrap_or(self.elapsed_secs);
+                let waveform = decode_levels(&self.bytes).unwrap_or_else(|| flat_shape(0).waveform);
+                VoiceShape {
+                    duration_secs,
+                    waveform,
+                }
+            }
+            Container::Unknown => flat_shape(self.elapsed_secs),
+        }
+    }
+}
+
+/// How long an Ogg Opus file plays: the granule position of its last
+/// page, in 48 kHz samples whatever the stream's own rate, which is the
+/// one thing about an Ogg that can be read without a decoder.
+pub fn ogg_duration_secs(bytes: &[u8]) -> Option<i64> {
+    let last = bytes
+        .windows(4)
+        .rposition(|w| w == b"OggS")
+        .filter(|&i| i + 14 <= bytes.len())?;
+    let granule = u64::from_le_bytes(bytes[last + 6..last + 14].try_into().ok()?);
+    if granule == u64::MAX {
+        return None;
+    }
+    Some((granule / 48_000) as i64)
+}
+
+/// The levels of anything ffmpeg can decode, as the waveform: ffmpeg
+/// reads the bytes on its stdin and writes 8 kHz mono PCM, which is
+/// plenty for 64 points. None where ffmpeg is missing or refuses.
+pub fn decode_levels(bytes: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Write;
+    let mut child = std::process::Command::new("ffmpeg")
+        .args([
+            "-loglevel",
+            "error",
+            "-i",
+            "-",
+            "-f",
+            "s16le",
+            "-ac",
+            "1",
+            "-ar",
+            "8000",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdin = child.stdin.take()?;
+    let input = bytes.to_vec();
+    // fed from its own thread, or a long recording deadlocks on the pipe
+    let feeder = std::thread::spawn(move || {
+        let _ = stdin.write_all(&input);
+    });
+    let output = child.wait_with_output().ok()?;
+    let _ = feeder.join();
+    if !output.status.success() || output.stdout.len() < 2 {
+        return None;
+    }
+    Some(peaks(&output.stdout))
+}
+
+/// One bucket a point, each the loudest 16-bit sample in it, which is
+/// what a waveform is meant to show.
+fn peaks(pcm: &[u8]) -> Vec<u8> {
+    let samples = pcm.len() / 2;
+    let per_bucket = samples.div_ceil(WAVEFORM_POINTS).max(1);
+    let mut waveform = Vec::with_capacity(WAVEFORM_POINTS);
+    let mut index = 0usize;
+    while index < samples {
+        let end = (index + per_bucket).min(samples);
+        let mut peak = 0i32;
+        for s in index..end {
+            let value = i16::from_le_bytes([pcm[s * 2], pcm[s * 2 + 1]]) as i32;
+            peak = peak.max(value.abs());
+        }
+        waveform.push((peak * 255 / 32768).clamp(0, 255) as u8);
+        index = end;
+    }
+    if waveform.is_empty() {
+        waveform.push(0);
+    }
+    waveform
 }
 
 /// What a voice message has to carry besides the bytes: how long it runs,
@@ -219,32 +428,10 @@ pub fn wav_shape(bytes: &[u8]) -> Option<VoiceShape> {
     let byte_rate = rate * channels * 2;
     let duration_secs = (len / byte_rate) as i64;
 
-    // one bucket a point, each the loudest sample in it, which is what a
-    // waveform is meant to show
-    let samples = len / 2;
-    let per_bucket = samples.div_ceil(WAVEFORM_POINTS).max(1);
-    let mut waveform = Vec::with_capacity(WAVEFORM_POINTS);
-    let mut index = 0usize;
-    while index < samples {
-        let end = (index + per_bucket).min(samples);
-        let mut peak = 0i32;
-        for s in index..end {
-            let at = start + s * 2;
-            if at + 1 >= bytes.len() {
-                break;
-            }
-            let value = i16::from_le_bytes([bytes[at], bytes[at + 1]]) as i32;
-            peak = peak.max(value.abs());
-        }
-        waveform.push((peak * 255 / 32768).clamp(0, 255) as u8);
-        index = end;
-    }
-    if waveform.is_empty() {
-        waveform.push(0);
-    }
+    let end = (start + len).min(bytes.len());
     Some(VoiceShape {
         duration_secs,
-        waveform,
+        waveform: peaks(&bytes[start..end]),
     })
 }
 
@@ -334,6 +521,83 @@ mod tests {
         assert!(wav_shape(&ogg).is_none());
     }
 
+    /// An Ogg page header on its own is enough to read the length from.
+    #[test]
+    fn an_oggs_last_page_says_how_long_it_is() {
+        let mut ogg = b"OggS\x00\x02".to_vec();
+        ogg.extend_from_slice(&(3 * 48_000u64).to_le_bytes());
+        ogg.extend_from_slice(&[0u8; 12]);
+        assert_eq!(ogg_duration_secs(&ogg), Some(3));
+        assert_eq!(Container::of(&ogg), Container::Ogg);
+        assert_eq!(Container::of(&wav(1)), Container::Wav);
+        assert_eq!(Container::of(b"ID3\x04"), Container::Unknown);
+        assert_eq!(ogg_duration_secs(b"OggS"), None);
+    }
+
+    /// A recorder that wrote something unreadable still has a length: the
+    /// time it was running for.
+    #[test]
+    fn an_unknown_recording_keeps_the_clock_and_a_flat_line() {
+        let shape = Recording {
+            bytes: b"ID3\x04 who knows".to_vec(),
+            elapsed_secs: 7,
+        }
+        .shape();
+        assert_eq!(shape.duration_secs, 7);
+        assert!(shape.waveform.iter().all(|&v| v == 128));
+        let shape = Recording {
+            bytes: wav(2),
+            elapsed_secs: 9,
+        }
+        .shape();
+        assert_eq!(shape.duration_secs, 2);
+        assert_eq!(shape.waveform.len(), WAVEFORM_POINTS);
+    }
+
+    /// With ffmpeg on PATH: an Ogg Opus made from a tone comes back with
+    /// its length off the last page and levels off the decoder.
+    #[test]
+    fn an_ogg_is_shaped_by_its_pages_and_the_decoder() {
+        if std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("tone.ogg");
+        let made = std::process::Command::new("ffmpeg")
+            .args(["-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("aevalsrc=0.8*sin(440*2*PI*t):s=48000:d=3")
+            .args(["-ac", "1", "-ar", "48000", "-c:a", "libopus", "-b:a", "32k"])
+            .arg(&out)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !made {
+            return;
+        }
+        let bytes = std::fs::read(&out).unwrap();
+        let shape = Recording {
+            bytes,
+            elapsed_secs: 99,
+        }
+        .shape();
+        assert_eq!(shape.duration_secs, 3);
+        assert_eq!(shape.waveform.len(), WAVEFORM_POINTS);
+        // eight tenths of full scale, less what Opus shaves off
+        assert!(*shape.waveform.iter().max().unwrap() > 150);
+    }
+
+    #[test]
+    fn the_recording_file_takes_the_extension_the_command_calls_for() {
+        assert_eq!(file_suffix(&["ffmpeg".into(), "{file}".into()]), ".ogg");
+        assert_eq!(file_suffix(&["/nix/store/x/bin/ffmpeg".into()]), ".ogg");
+        assert_eq!(file_suffix(&["pw-record".into(), "{file}".into()]), ".wav");
+        assert_eq!(file_suffix(&["myrec".into(), "--opus".into()]), ".ogg");
+    }
+
     #[test]
     fn the_file_goes_where_the_command_says_or_on_the_end() {
         let path = Path::new("/tmp/x.wav");
@@ -362,5 +626,14 @@ mod tests {
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         let argv = recorder_command_in("", dir.path().as_os_str()).unwrap();
         assert_eq!(argv[0], "arecord");
+        // ffmpeg beside it wins, and asks for Ogg Opus from the capture side
+        let f = dir.path().join("ffmpeg");
+        std::fs::write(&f, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let argv = recorder_command_in("", dir.path().as_os_str()).unwrap();
+        assert_eq!(argv[0], "ffmpeg");
+        assert!(argv.contains(&"libopus".to_string()));
+        assert!(argv.contains(&"{capture}".to_string()));
+        assert!(matches!(capture_input(), "pulse" | "alsa"));
     }
 }
