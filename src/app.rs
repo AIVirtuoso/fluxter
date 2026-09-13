@@ -1460,7 +1460,14 @@ pub fn client_system_message(app: &mut App, channel_id: &str, content: String) -
 #[derive(Debug)]
 pub struct ProfileEditView {
     pub selected: usize,
-    pub input: Option<ProfileEditInput>,
+    /// The row whose value is in the compose box, which is where it is
+    /// typed: the box has paste, a cursor, a selection and undo, and a
+    /// second editor would have none of them.
+    pub editing: Option<ProfileEditRow>,
+    /// The draft the compose box held before a row borrowed it, and the
+    /// focus that was left, both given back when the row is done.
+    pub stashed_draft: String,
+    pub focus_before: Focus,
     /// The row x asked to clear, until Enter clears it or any other key
     /// keeps it.
     pub confirm_clear: Option<ProfileEditRow>,
@@ -1503,46 +1510,27 @@ impl ProfileEditRow {
     pub fn clearable(self) -> bool {
         !matches!(self, Self::ReplyMentions)
     }
-}
 
-/// What the editor's footer is asking for.
-#[derive(Debug, Clone)]
-pub enum ProfileEditInput {
-    DisplayName(String),
-    Bio(String),
-    Pronouns(String),
-    AccentColour(String),
-    PicturePath(String),
-}
-
-impl ProfileEditInput {
-    pub fn text(&self) -> &str {
+    /// What the compose box is asking for while the row is typed in it.
+    pub fn prompt(self) -> &'static str {
         match self {
-            Self::DisplayName(t)
-            | Self::Bio(t)
-            | Self::Pronouns(t)
-            | Self::AccentColour(t)
-            | Self::PicturePath(t) => t,
+            Self::DisplayName => "Display name (empty clears it)",
+            Self::Bio => "About you (empty clears it)",
+            Self::Pronouns => "Pronouns (empty clears it)",
+            Self::AccentColour => "Colour as #rrggbb (empty clears it)",
+            Self::Picture => "Path to a picture",
+            Self::ReplyMentions => "",
         }
     }
 
-    pub fn text_mut(&mut self) -> &mut String {
+    /// The most the server takes for the row, in characters; None where
+    /// the row is not free text.
+    pub fn max_chars(self) -> Option<usize> {
         match self {
-            Self::DisplayName(t)
-            | Self::Bio(t)
-            | Self::Pronouns(t)
-            | Self::AccentColour(t)
-            | Self::PicturePath(t) => t,
-        }
-    }
-
-    pub fn prompt(&self) -> &'static str {
-        match self {
-            Self::DisplayName(_) => "Display name (empty clears it)",
-            Self::Bio(_) => "About you (empty clears it)",
-            Self::Pronouns(_) => "Pronouns (empty clears it)",
-            Self::AccentColour(_) => "Colour as #rrggbb (empty clears it)",
-            Self::PicturePath(_) => "Path to a picture",
+            Self::DisplayName => Some(32),
+            Self::Bio => Some(320),
+            Self::Pronouns => Some(40),
+            _ => None,
         }
     }
 }
@@ -5404,7 +5392,10 @@ impl App {
     /// text. A message being edited and a slash command are not typing.
     pub fn note_own_typing(&mut self) {
         let text = format!("{}{}", self.input, self.input_tail);
-        let counts = self.ui_settings.send_typing && self.edit_target.is_none();
+        // a profile row typed in the box is nobody's business in the channel
+        let counts = self.ui_settings.send_typing
+            && self.edit_target.is_none()
+            && self.profile_field_editing().is_none();
         let channel = self.active_channel_id();
         self.own_typing
             .note(&text, channel.as_deref(), counts, Instant::now());
@@ -7076,9 +7067,46 @@ impl App {
         self.close_overlays();
         self.profile_edit = Some(ProfileEditView {
             selected: 0,
-            input: None,
+            editing: None,
+            stashed_draft: String::new(),
+            focus_before: self.focus,
             confirm_clear: None,
         });
+    }
+
+    /// Hand a row's value to the compose box. The draft the box held is
+    /// kept aside and comes back when the row is saved or dropped.
+    pub fn begin_profile_field(&mut self, row: ProfileEditRow, value: String) {
+        let draft = self.take_input();
+        let focus = self.focus;
+        if let Some(view) = self.profile_edit.as_mut() {
+            view.editing = Some(row);
+            view.stashed_draft = draft;
+            view.focus_before = focus;
+        }
+        self.set_input(value);
+        self.focus = Focus::Input;
+    }
+
+    /// The row the compose box is typing for, while one is.
+    pub fn profile_field_editing(&self) -> Option<ProfileEditRow> {
+        self.profile_edit.as_ref()?.editing
+    }
+
+    /// Take the compose box back: the row and what was typed for it, with
+    /// the draft restored and the focus where it was.
+    pub fn end_profile_field(&mut self) -> Option<(ProfileEditRow, String)> {
+        let view = self.profile_edit.as_mut()?;
+        let row = view.editing.take()?;
+        let draft = std::mem::take(&mut view.stashed_draft);
+        let focus = view.focus_before;
+        self.dismiss_emoji_autocomplete();
+        self.dismiss_mention_autocomplete();
+        self.dismiss_command_autocomplete();
+        let value = self.take_input();
+        self.set_input(draft);
+        self.focus = focus;
+        Some((row, value))
     }
 
     /// x on a row that can be cleared: ask, rather than clear. A picture
@@ -7113,8 +7141,8 @@ impl App {
         if view.confirm_clear.take().is_some() {
             return;
         }
-        if view.input.is_some() {
-            view.input = None;
+        if view.editing.is_some() {
+            self.end_profile_field();
         } else {
             self.profile_edit = None;
         }
@@ -10034,6 +10062,9 @@ impl App {
     }
 
     pub fn update_mention_filter(&mut self) {
+        if self.profile_field_editing().is_some() {
+            return;
+        }
         let Some(auto) = &mut self.mention_autocomplete else {
             return;
         };
@@ -10179,6 +10210,9 @@ impl App {
     }
 
     pub fn sync_command_autocomplete(&mut self) {
+        if self.profile_field_editing().is_some() {
+            return;
+        }
         if self.focus != Focus::Input || !self.can_send_in_active_channel() {
             self.command_autocomplete = None;
             return;

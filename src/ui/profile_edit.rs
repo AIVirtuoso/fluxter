@@ -61,7 +61,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let footer = match &view.input {
+    let footer = match view.editing {
+        // the row's value is in the compose box, with everything the box
+        // can do: paste, a cursor, a selection, undo
+        Some(_) => "typing goes to the Input box below  \u{b7}  paste and every editing key work there  \u{b7}  Enter saves  \u{b7}  Esc keeps it as it was".to_string(),
         // x asked about a row: the one key that clears it is named, and
         // every other one keeps it
         None if view.confirm_clear.is_some() => {
@@ -71,11 +74,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 .unwrap_or_default();
             format!("Clear {label}?  \u{b7}  Enter clears it  \u{b7}  any other key keeps it")
         }
-        Some(input) => format!(
-            "{}: {}\u{2588}  \u{b7}  Enter save  \u{b7}  Esc cancel",
-            input.prompt(),
-            input.text()
-        ),
         None => {
             let clearable = app
                 .profile_edit_selected_row()
@@ -191,11 +189,12 @@ mod tests {
         app.open_profile_edit();
         let out = drawn(&app, 80, 12);
         assert!(out.contains("x clear it"), "{out}");
-        if let Some(view) = app.profile_edit.as_mut() {
-            view.input = Some(crate::app::ProfileEditInput::Bio("hello".into()));
-        }
+        app.profile_edit_move(1);
+        app.begin_profile_field(crate::app::ProfileEditRow::Bio, "hello".into());
         let out = drawn(&app, 80, 12);
-        assert!(out.contains("About you (empty clears it): hello"), "{out}");
+        assert!(out.contains("typing goes to the Input box below"), "{out}");
+        assert_eq!(app.input_text(), "hello");
+        assert_eq!(app.focus, crate::app::Focus::Input);
     }
 
     /// x does not clear on its own: the footer asks, and names Enter.

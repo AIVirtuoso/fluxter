@@ -1303,7 +1303,12 @@ else's.
 ## Your own profile
 
 **Alt+E** opens it: the things about yourself that can be changed without
-the server asking for your password.
+the server asking for your password. **Enter** on a text row puts its value
+in the Input box at the bottom, so it is typed the way a message is: paste
+with **Alt+V** or your terminal's paste, move with the cursor keys, select,
+undo, and **Alt+Enter** for a new line in the biography. **Enter** there
+saves the row and **Esc** keeps it as it was; the message you were writing
+comes back to the box afterwards.
 
 | Row | What it takes |
 | --- | ------------- |
@@ -1314,8 +1319,10 @@ the server asking for your password.
 | **Picture** | A path to an image file, `~` understood. The client reads it, turns it into the data URI the API wants, and sends it; **x** clears your picture. |
 | **When somebody replies to you** | **Enter** cycles the three the server offers: whatever they choose, mention me by default, do not mention me by default. |
 
-Everything is saved as soon as you press **Enter**, and the gateway's
-`USER_UPDATE` brings the change back to every client you have open.
+Everything is saved as soon as you press **Enter** in the Input box, and the
+gateway's `USER_UPDATE` brings the change back to every client you have
+open. Display name, biography and pronouns are checked against the server's
+limits (32, 320 and 40 characters) before anything is sent.
 **x** on a row does not clear it on its own: the footer asks, **Enter**
 clears it, and any other key keeps what is there, since a cleared picture
 or biography cannot be got back.
