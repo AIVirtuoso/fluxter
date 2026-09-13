@@ -215,6 +215,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) -> Option<(u16, u16)> {
 
     let placeholder: Option<String> = if voice_only || no_perms || !can_type {
         None
+    } else if app.input_is_empty() && app.recording_secs().is_some() {
+        // the microphone is open: that outranks what the box would say
+        // about a reply, which the recording will be anyway
+        Some(match app.reply_to.as_ref() {
+            Some(reply) => format!(
+                "\u{25CF} Recording a voice message as a reply to {}\u{2026}  Ctrl+R sends it, Esc throws it away",
+                reply.author_name
+            ),
+            None => {
+                "\u{25CF} Recording a voice message\u{2026}  Ctrl+R sends it, Esc throws it away"
+                    .to_string()
+            }
+        })
     } else if app.input_is_empty() {
         Some(if let Some(ref reply) = app.reply_to {
             if app.forward_mode {

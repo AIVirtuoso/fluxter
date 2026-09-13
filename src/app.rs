@@ -4640,7 +4640,13 @@ impl App {
             Ok(recorder) => {
                 crate::debug::log("voice", format!("recording with {}", recorder.program));
                 self.recorder = Some(recorder);
-                self.set_status("Recording: Ctrl+R sends it, Esc throws it away.");
+                self.set_status(match self.reply_to.as_ref() {
+                    Some(reply) => format!(
+                        "Recording a reply to {}: Ctrl+R sends it, Esc throws it away.",
+                        reply.author_name
+                    ),
+                    None => "Recording: Ctrl+R sends it, Esc throws it away.".to_string(),
+                });
                 true
             }
             Err(err) => {

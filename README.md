@@ -617,6 +617,12 @@ and their length.
 away. While it runs, the status bar shows `recording 0:07` with both keys
 beside it, whichever box has the focus.
 
+A recording started while a reply is open goes as that reply, and the
+reply mode ends with it the way it does for a typed message; the box says
+"Recording a voice message as a reply to …" instead of "Replying to" while
+the microphone is open. A forward cannot carry a recording, so forward
+mode is simply left.
+
 The client does not touch the microphone itself. It starts a program and
 reads the file that program writes, the same division as playing audio and
 carrying a call. With **ffmpeg** on PATH -- which the client already uses
