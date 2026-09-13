@@ -846,8 +846,93 @@ pub struct MessageResponse {
     pub message_reference: Option<MessageReferenceResponse>,
     #[serde(default)]
     pub referenced_message: Option<Box<MessageResponse>>,
+    /// The forwarded copies a FORWARD reference carries. A forward leaves
+    /// `referenced_message` unset and puts everything the reader is meant
+    /// to see here, so a client that ignores these shows an empty message.
+    #[serde(default)]
+    pub message_snapshots: Vec<MessageSnapshotResponse>,
     #[serde(default)]
     pub member: Option<GuildMemberResponse>,
+}
+
+/// One forwarded message, flattened. It has no id, channel or author of
+/// its own: the server strips those on purpose, so a forward cannot be
+/// traced back to where it came from.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Hash)]
+pub struct MessageSnapshotResponse {
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    #[serde(default)]
+    pub edited_timestamp: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<MessageAttachmentResponse>,
+    #[serde(default)]
+    pub embeds: Vec<MessageEmbedResponse>,
+    #[serde(default)]
+    pub stickers: Vec<MessageStickerResponse>,
+    #[serde(default, rename = "type")]
+    pub message_type: i32,
+    #[serde(default)]
+    pub flags: u64,
+}
+
+impl MessageResponse {
+    /// Whether the message is a forward rather than a reply: the two use
+    /// the same reference field and are told apart by its type.
+    pub fn is_forward(&self) -> bool {
+        self.message_reference
+            .as_ref()
+            .is_some_and(|r| r.reference_type == MESSAGE_REFERENCE_FORWARD)
+    }
+
+    /// The text a reader is meant to see: what the sender typed, and the
+    /// text of every forwarded copy under it. Borrowed when there is
+    /// nothing forwarded, which is every ordinary message.
+    pub fn display_content(&self) -> std::borrow::Cow<'_, str> {
+        if self.message_snapshots.iter().all(|s| s.content.is_empty()) {
+            return std::borrow::Cow::Borrowed(&self.content);
+        }
+        let mut out = self.content.trim_end().to_string();
+        for snapshot in &self.message_snapshots {
+            if snapshot.content.is_empty() {
+                continue;
+            }
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(snapshot.content.trim_end());
+        }
+        std::borrow::Cow::Owned(out)
+    }
+
+    /// Everything attached to the message, the forwarded copies included.
+    /// `attachments` alone is what the message itself owns, which is what
+    /// an attachment can be deleted from.
+    pub fn all_attachments(&self) -> impl Iterator<Item = &MessageAttachmentResponse> {
+        self.attachments.iter().chain(
+            self.message_snapshots
+                .iter()
+                .flat_map(|s| s.attachments.iter()),
+        )
+    }
+
+    /// Every sticker on the message, the forwarded copies included.
+    pub fn all_stickers(&self) -> impl Iterator<Item = &MessageStickerResponse> {
+        self.stickers.iter().chain(
+            self.message_snapshots
+                .iter()
+                .flat_map(|s| s.stickers.iter()),
+        )
+    }
+
+    /// Every embed on the message, the forwarded copies included.
+    pub fn all_embeds(&self) -> impl Iterator<Item = &MessageEmbedResponse> {
+        self.embeds
+            .iter()
+            .chain(self.message_snapshots.iter().flat_map(|s| s.embeds.iter()))
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Hash)]
@@ -1565,6 +1650,11 @@ impl RelationshipResponse {
 /// Bit 2 of a message's `flags`: the server leaves the embeds out of
 /// the message when it is set, which is what "suppress embeds" does.
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
+
+/// `message_reference.type`: 0 is a reply to the message it names, 1 is a
+/// forward of it, whose content arrives as `message_snapshots`.
+pub const MESSAGE_REFERENCE_REPLY: i32 = 0;
+pub const MESSAGE_REFERENCE_FORWARD: i32 = 1;
 
 /// One entry of `GET /channels/{id}/messages/pins`: the message and when
 /// it was pinned (which is not the message's own timestamp).

@@ -243,7 +243,10 @@ fn truncate_to_display_width(s: &str, max_w: usize) -> String {
 }
 
 fn referenced_body_preview(ref_msg: &crate::api::types::MessageResponse) -> String {
-    let c = ref_msg.content.trim();
+    // a reply to a forward has its text in the forwarded copy, so the
+    // preview reads the same effective sets the body does
+    let content = ref_msg.display_content();
+    let c = content.trim();
     if !c.is_empty() {
         let flat: String = c.chars().filter(|&x| x != '\n' && x != '\r').collect();
         let count = flat.chars().count();
@@ -252,21 +255,21 @@ fn referenced_body_preview(ref_msg: &crate::api::types::MessageResponse) -> Stri
             s.push('…');
         }
         s
-    } else if !ref_msg.attachments.is_empty() {
-        let n = ref_msg.attachments.len();
+    } else if let Some(first) = ref_msg.all_attachments().next() {
+        let n = ref_msg.all_attachments().count();
         if n == 1 {
-            format!("[file: {}]", ref_msg.attachments[0].filename)
+            format!("[file: {}]", first.filename)
         } else {
             format!("[{n} attachments]")
         }
-    } else if !ref_msg.stickers.is_empty() {
-        let n = ref_msg.stickers.len();
+    } else if let Some(first) = ref_msg.all_stickers().next() {
+        let n = ref_msg.all_stickers().count();
         if n == 1 {
-            format!("[sticker: {}]", ref_msg.stickers[0].name)
+            format!("[sticker: {}]", first.name)
         } else {
             format!("[{n} stickers]")
         }
-    } else if !ref_msg.embeds.is_empty() {
+    } else if ref_msg.all_embeds().next().is_some() {
         "[embed]".to_string()
     } else {
         "(no text)".to_string()
@@ -718,8 +721,8 @@ fn build_message_lines(
                 clock_12h,
                 author_presence,
             ));
-        } else if let Some(mref) = &message.message_reference {
-            let (ctx_body, body_style) = if mref.reference_type == 1 {
+        } else if message.message_reference.is_some() {
+            let (ctx_body, body_style) = if message.is_forward() {
                 (
                     "Forwarded",
                     crate::ui::theme::muted_style().add_modifier(Modifier::ITALIC),
@@ -763,15 +766,17 @@ fn build_message_lines(
             ));
         }
 
-        if !message.content.trim().is_empty() {
-            markdown_rows(&mut rows, &message.content, app, None);
+        // a forward's text is in its snapshots, not in `content`
+        let body_text = message.display_content();
+        if !body_text.trim().is_empty() {
+            markdown_rows(&mut rows, &body_text, app, None);
         }
 
         prev_author_id = Some(&message.author.id);
         prev_timestamp = cur_ts;
 
         let mut pictures_left = crate::media::MAX_PICTURES_PER_MESSAGE;
-        for attachment in &message.attachments {
+        for attachment in message.all_attachments() {
             let size_str = match attachment.size {
                 Some(s) if s < 1024 => format!("{} B", s),
                 Some(s) if s < 1024 * 1024 => format!("{:.1} KB", s as f64 / 1024.0),
@@ -805,7 +810,7 @@ fn build_message_lines(
             }
         }
 
-        for sticker in &message.stickers {
+        for sticker in message.all_stickers() {
             rows.push(body_row(vec![
                 Span::styled(
                     "\u{1F5BC} ",
@@ -831,7 +836,7 @@ fn build_message_lines(
             }
         }
 
-        for embed in &message.embeds {
+        for embed in message.all_embeds() {
             let has_content = embed.title.is_some()
                 || embed.description.is_some()
                 || embed.author.is_some()
@@ -2956,5 +2961,155 @@ mod highlight_tests {
         app.selected_message_index = None;
         let rows = draw(&mut app, 100, 24);
         assert_eq!(gutter_of(&rows, row_above(&rows, "the original")), "  ");
+    }
+}
+
+/// A forward keeps everything it is showing in `message_snapshots`: no
+/// content, no referenced_message, so the pane has to read them or it
+/// draws a header over nothing.
+#[cfg(test)]
+mod forward_tests {
+    use crate::api::types::{
+        ChannelResponse, MESSAGE_REFERENCE_FORWARD, MessageAttachmentResponse,
+        MessageReferenceResponse, MessageResponse, MessageSnapshotResponse, UserPartialResponse,
+        UserPrivateResponse, WellKnownFluxerResponse,
+    };
+    use crate::app::{App, Focus, ServerSelection};
+    use crate::config::UiSettings;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn user(id: &str) -> UserPartialResponse {
+        UserPartialResponse {
+            id: id.into(),
+            username: id.into(),
+            discriminator: "0001".into(),
+            ..Default::default()
+        }
+    }
+
+    /// What the server sends for a forward: the note the sender typed as
+    /// the content (here none at all), the original under it.
+    fn forward(note: &str, snapshot: MessageSnapshotResponse) -> MessageResponse {
+        MessageResponse {
+            id: "20".into(),
+            channel_id: "c".into(),
+            author: user("bob"),
+            content: note.into(),
+            timestamp: "2026-09-12T10:20:00.000Z".into(),
+            message_reference: Some(MessageReferenceResponse {
+                channel_id: "other".into(),
+                message_id: "19".into(),
+                reference_type: MESSAGE_REFERENCE_FORWARD,
+                ..Default::default()
+            }),
+            message_snapshots: vec![snapshot],
+            ..Default::default()
+        }
+    }
+
+    fn app_with(message: MessageResponse) -> App {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let channel = ChannelResponse {
+            id: "c".into(),
+            kind: 1,
+            recipients: vec![user("bob")],
+            ..Default::default()
+        };
+        let mut ui = UiSettings::default();
+        ui.avatars = false;
+        ui.inline_media = false;
+        let mut app = App::new(
+            WellKnownFluxerResponse::default(),
+            me,
+            None,
+            Vec::new(),
+            vec![channel],
+            ServerSelection::DirectMessages,
+            Some("c".into()),
+            ui,
+        );
+        app.focus = Focus::Messages;
+        app.upsert_message(message);
+        app
+    }
+
+    fn draw(app: &mut App, w: u16, h: u16) -> Vec<String> {
+        let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+        t.draw(|f| crate::ui::draw(f, app)).unwrap();
+        let buf = t.backend().buffer().clone();
+        (0..h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_forwarded_message_shows_its_text_and_its_files() {
+        let snapshot = MessageSnapshotResponse {
+            content: "the kitchen end4.".into(),
+            attachments: vec![MessageAttachmentResponse {
+                id: "1".into(),
+                filename: "floorplan.pdf".into(),
+                size: Some(2048),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut app = app_with(forward("", snapshot));
+        let rows = draw(&mut app, 100, 24);
+        let joined = rows.join("\n");
+        assert!(joined.contains("Forwarded"), "{joined}");
+        assert!(joined.contains("the kitchen end4."), "{joined}");
+        assert!(joined.contains("floorplan.pdf"), "{joined}");
+    }
+
+    #[test]
+    fn the_note_comes_first_and_the_forwarded_text_under_it() {
+        let snapshot = MessageSnapshotResponse {
+            content: "forwarded body".into(),
+            ..Default::default()
+        };
+        let message = forward("look at this", snapshot);
+        let text = message.display_content();
+        assert_eq!(text, "look at this\n\nforwarded body");
+        let mut app = app_with(message);
+        let rows = draw(&mut app, 100, 24);
+        let note = rows.iter().position(|r| r.contains("look at this"));
+        let body = rows.iter().position(|r| r.contains("forwarded body"));
+        assert!(note.is_some() && body.is_some(), "{rows:?}");
+        assert!(note < body, "{rows:?}");
+    }
+
+    #[test]
+    fn copying_a_forward_hands_over_what_it_shows() {
+        let snapshot = MessageSnapshotResponse {
+            content: "forwarded body".into(),
+            attachments: vec![MessageAttachmentResponse {
+                id: "1".into(),
+                filename: "cat.png".into(),
+                url: Some("https://example.invalid/cat.png".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let text = crate::app::message_copy_text(&forward("", snapshot));
+        assert_eq!(text, "forwarded body\nhttps://example.invalid/cat.png");
+    }
+
+    /// An ordinary message has no snapshots, and nothing about it changes.
+    #[test]
+    fn a_plain_message_is_untouched() {
+        let mut m = forward("just text", MessageSnapshotResponse::default());
+        m.message_reference = None;
+        m.message_snapshots.clear();
+        assert_eq!(m.display_content(), "just text");
+        assert_eq!(m.all_attachments().count(), 0);
     }
 }

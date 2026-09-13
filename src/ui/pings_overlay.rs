@@ -129,8 +129,9 @@ pub fn preview_spans(
     message: &crate::api::types::MessageResponse,
     base: Style,
 ) -> Vec<Span<'static>> {
-    if message.content.trim().is_empty() {
-        let n = message.attachments.len();
+    let content = message.display_content();
+    if content.trim().is_empty() {
+        let n = message.all_attachments().count();
         let what = if n == 1 {
             "1 attachment".to_string()
         } else if n > 1 {
@@ -141,7 +142,7 @@ pub fn preview_spans(
         return vec![Span::styled(what, base.add_modifier(Modifier::ITALIC))];
     }
     let mut out = Vec::new();
-    for (i, line) in crate::ui::message_markdown::content_lines(&message.content, app)
+    for (i, line) in crate::ui::message_markdown::content_lines(&content, app)
         .into_iter()
         .enumerate()
     {

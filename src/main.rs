@@ -5194,7 +5194,11 @@ fn spawn_send_message(
             message_id: r.message_id,
             channel_id: Some(r.channel_id),
             guild_id: r.source_guild_id,
-            reference_type: Some(if is_forward { 1 } else { 0 }),
+            reference_type: Some(if is_forward {
+                crate::api::types::MESSAGE_REFERENCE_FORWARD
+            } else {
+                crate::api::types::MESSAGE_REFERENCE_REPLY
+            }),
         });
 
         let request = CreateMessageRequest {
