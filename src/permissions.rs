@@ -7,6 +7,10 @@ pub const SEND_MESSAGES: u64 = 0x800;
 pub const SEND_TTS_MESSAGES: u64 = 0x1000;
 pub const MANAGE_MESSAGES: u64 = 0x2000;
 pub const CHANGE_NICKNAME: u64 = 0x4000000;
+/// Adding an emoji or a sticker, and changing the ones you added.
+pub const CREATE_EXPRESSIONS: u64 = 1 << 43;
+/// Changing and deleting an emoji or sticker somebody else added.
+pub const MANAGE_EXPRESSIONS: u64 = 1 << 30;
 
 /// Kept in sync with the API
 #[allow(dead_code)]

@@ -279,6 +279,56 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     .to_string(),
             )
         }
+        CommunityMode::Expressions { guild_id, stickers } => {
+            let name = app
+                .guilds
+                .iter()
+                .find(|g| &g.id == guild_id)
+                .map(|g| g.name.clone())
+                .unwrap_or_default();
+            let items = app.expression_rows(guild_id, *stickers);
+            let what = if *stickers { "Stickers" } else { "Emoji" };
+            let rows = if items.is_empty() {
+                vec![Line::from(Span::styled(
+                    "  None yet (+ adds one from a file).",
+                    muted,
+                ))]
+            } else {
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (_, item_name, animated))| {
+                        let selected = index == view.selected;
+                        let shown = if *stickers {
+                            item_name.clone()
+                        } else {
+                            format!(":{item_name}:")
+                        };
+                        Line::from(vec![
+                            Span::styled(if selected { " \u{25B8} " } else { "   " }, accent),
+                            Span::styled(
+                                shown,
+                                if selected {
+                                    text.add_modifier(Modifier::BOLD)
+                                } else {
+                                    text
+                                },
+                            ),
+                            Span::styled(
+                                if *animated { "   animated" } else { "" }.to_string(),
+                                muted,
+                            ),
+                        ])
+                    })
+                    .collect()
+            };
+            (
+                format!(" {what} in {name} "),
+                rows,
+                "\u{2191}/\u{2193} move  \u{b7}  + add one  \u{b7}  r rename  \u{b7}  x delete  \u{b7}  Esc back"
+                    .to_string(),
+            )
+        }
     };
 
     let block = Block::default()

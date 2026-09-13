@@ -1051,6 +1051,110 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// Add an emoji from an image. `image` takes a data URI or bare
+    /// base64, at most 512 KB decoded by default.
+    pub async fn create_guild_emoji(
+        &self,
+        guild_id: &str,
+        name: &str,
+        image: &str,
+    ) -> Result<crate::api::types::GuildEmojiResponse> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            name: &'a str,
+            image: &'a str,
+        }
+        self.send_json(
+            Method::POST,
+            &format!("/guilds/{guild_id}/emojis"),
+            None::<&()>,
+            Some(&Body { name, image }),
+            false,
+        )
+        .await
+    }
+
+    pub async fn rename_guild_emoji(
+        &self,
+        guild_id: &str,
+        emoji_id: &str,
+        name: &str,
+    ) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            name: &'a str,
+        }
+        self.send_empty(
+            Method::PATCH,
+            &format!("/guilds/{guild_id}/emojis/{emoji_id}"),
+            Some(&Body { name }),
+            "rename the emoji",
+        )
+        .await
+    }
+
+    pub async fn delete_guild_emoji(&self, guild_id: &str, emoji_id: &str) -> Result<()> {
+        self.send_empty::<()>(
+            Method::DELETE,
+            &format!("/guilds/{guild_id}/emojis/{emoji_id}"),
+            None,
+            "delete the emoji",
+        )
+        .await
+    }
+
+    /// Add a sticker from an image. The tags the picker searches by are
+    /// the server's own, so none are sent.
+    pub async fn create_guild_sticker(
+        &self,
+        guild_id: &str,
+        name: &str,
+        image: &str,
+    ) -> Result<crate::api::types::GuildStickerResponse> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            name: &'a str,
+            image: &'a str,
+        }
+        self.send_json(
+            Method::POST,
+            &format!("/guilds/{guild_id}/stickers"),
+            None::<&()>,
+            Some(&Body { name, image }),
+            false,
+        )
+        .await
+    }
+
+    pub async fn rename_guild_sticker(
+        &self,
+        guild_id: &str,
+        sticker_id: &str,
+        name: &str,
+    ) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            name: &'a str,
+        }
+        self.send_empty(
+            Method::PATCH,
+            &format!("/guilds/{guild_id}/stickers/{sticker_id}"),
+            Some(&Body { name }),
+            "rename the sticker",
+        )
+        .await
+    }
+
+    pub async fn delete_guild_sticker(&self, guild_id: &str, sticker_id: &str) -> Result<()> {
+        self.send_empty::<()>(
+            Method::DELETE,
+            &format!("/guilds/{guild_id}/stickers/{sticker_id}"),
+            None,
+            "delete the sticker",
+        )
+        .await
+    }
+
     /// Leave a community. The reader cannot leave one they own; the
     /// server says so.
     pub async fn leave_guild(&self, guild_id: &str) -> Result<()> {

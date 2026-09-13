@@ -998,6 +998,8 @@ first three are always there, the last two only inside a community.
 | **Make a community** | Asks for a name and makes it. You are its owner. |
 | **Browse the directory** | The instance's discovery listing. **/** searches it, **Enter** joins straight from the list without an invite. |
 | **Invites to this community** | Every invite you may see. **y** copies its link, **+** makes one to the channel now open, **x** revokes. |
+| **Emoji in this community** | Every custom emoji by name. **+** adds one from a file, **r** renames, **x** deletes. |
+| **Stickers in this community** | The same for stickers. |
 | **Leave this community** | Leaves it. A community you own cannot be left, and the client says so rather than sending a call the server would refuse. |
 
 ### An invite is looked up before it is taken
@@ -1012,6 +1014,25 @@ not seen.
 An invite made with **+** is a day long with no limit on uses, which is
 what the server itself defaults to, and its link goes on the clipboard as
 soon as it exists.
+
+### Adding an emoji or a sticker
+
+**+** on either list asks for a **path to an image** (`~` understood),
+reads it, and then asks for a **name**, already filled in with the file's
+own name. The client turns the bytes into the data URI the API takes, so
+nothing is uploaded separately.
+
+The limit is **512 KB decoded**, which the client checks before sending
+rather than after a round trip; the instance may allow less, and its
+refusal is shown as it came. An emoji name is 2 to 32 characters of
+letters, digits and underscore, a sticker name 2 to 30 of anything. Both
+lists need **Create Expressions** to add, and somebody else's emoji or
+sticker needs **Manage Expressions** to rename or delete.
+
+The lists come from what the gateway already sent at startup, so they open
+with no request at all, and `GUILD_EMOJIS_UPDATE` and
+`GUILD_STICKERS_UPDATE` redraw them after every change -- yours or anybody
+else's.
 
 ## Message formatting
 
@@ -1246,7 +1267,7 @@ close. The profile of a selected message's author is on **u** now.
 | **Alt+N**               | **Start a conversation** with somebody, or a group with several (see "Conversations").                                                                                                                                                                  |
 | **Alt+G**               | Look after the **group** now open: rename it, add somebody, take somebody out, leave it.                                                                                                                                                                |
 
-| **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites, or leave it (see "Communities and invites").                                                                                                        |
+| **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites, its emoji or its stickers, or leave it (see "Communities and invites").                                                                                                        |
 
 | **Alt+V**               | **Voice**: join the open voice channel, ring a conversation, answer or turn down a call, mute, deafen, leave (see "Voice").                                                                                                                             |
 | **F1**                  | **Keybindings** overlay - **↑** / **↓** / **PgUp** / **PgDn** scroll when it does not fit (**Esc** / **Enter** / **q** to close).                                                                                                                        |

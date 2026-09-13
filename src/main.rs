@@ -1989,6 +1989,47 @@ fn handle_key_event(
                     view.input = Some(crate::app::CommunityInput::Search(String::new()));
                 }
             }
+            KeyCode::Char('+') if app.community_expressions().is_some() => {
+                if let Some((_, stickers)) = app.community_expressions()
+                    && let Some(view) = app.community.as_mut()
+                {
+                    view.input = Some(crate::app::CommunityInput::ExpressionPath {
+                        stickers,
+                        text: String::new(),
+                    });
+                }
+            }
+            KeyCode::Char('r') if app.community_selected_expression().is_some() => {
+                if let (Some((id, name, _)), Some((_, stickers))) = (
+                    app.community_selected_expression(),
+                    app.community_expressions(),
+                ) && let Some(view) = app.community.as_mut()
+                {
+                    view.input = Some(crate::app::CommunityInput::RenameExpression {
+                        stickers,
+                        id,
+                        text: name,
+                    });
+                }
+            }
+            KeyCode::Char('x') | KeyCode::Delete
+                if app.community_selected_expression().is_some() =>
+            {
+                if let (Some((id, name, _)), Some((guild_id, stickers))) = (
+                    app.community_selected_expression(),
+                    app.community_expressions(),
+                ) {
+                    app.set_status(format!("Deleting {name}…"));
+                    spawn_delete_expression(
+                        client.clone(),
+                        event_tx.clone(),
+                        guild_id,
+                        stickers,
+                        id,
+                        name,
+                    );
+                }
+            }
             KeyCode::Char('+') => {
                 // a new invite is always to the channel now open, which
                 // is the only one the reader has said anything about
@@ -3720,6 +3761,13 @@ fn run_community_action(
             app.open_guild_invites(guild_id.clone());
             spawn_guild_invites(client.clone(), event_tx.clone(), guild_id);
         }
+        crate::app::CommunityAction::Emojis | crate::app::CommunityAction::Stickers => {
+            let Some(guild_id) = app.active_guild_id() else {
+                return;
+            };
+            let stickers = action == crate::app::CommunityAction::Stickers;
+            app.open_guild_expressions(guild_id, stickers);
+        }
         crate::app::CommunityAction::Leave => {
             let Some(guild_id) = app.active_guild_id() else {
                 return;
@@ -3909,6 +3957,91 @@ fn run_community_input(
             app.dismiss_communities();
             app.set_status(format!("Making {name}…"));
             spawn_create_guild(client.clone(), event_tx.clone(), name);
+        }
+        crate::app::CommunityInput::ExpressionPath { stickers, text } => {
+            let path = crate::media::expand_home(text.trim());
+            let bytes = match std::fs::read(&path) {
+                Ok(bytes) if bytes.is_empty() => {
+                    app.set_status("That file is empty.");
+                    return;
+                }
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    app.set_status(format!("Could not read it: {err}"));
+                    return;
+                }
+            };
+            // the server decodes at most 512 KB by default, so say so here
+            // rather than after a round trip
+            if bytes.len() > 512 * 1024 {
+                app.set_status(format!(
+                    "That is {} and the limit is 512 KB.",
+                    crate::media::human_size(bytes.len())
+                ));
+                return;
+            }
+            let data_uri = crate::media::data_uri_for_file(&path, &bytes);
+            // the file's own name is the obvious name for it
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if let Some(view) = app.community.as_mut() {
+                view.input = Some(crate::app::CommunityInput::ExpressionName {
+                    stickers,
+                    data_uri,
+                    text: stem,
+                });
+            }
+        }
+        crate::app::CommunityInput::ExpressionName {
+            stickers,
+            data_uri,
+            text,
+        } => {
+            let Some((guild_id, _)) = app.community_expressions() else {
+                return;
+            };
+            let name = text.trim().to_string();
+            if name.len() < 2 {
+                app.set_status("A name is at least two characters.");
+                return;
+            }
+            if let Some(view) = app.community.as_mut() {
+                view.input = None;
+            }
+            app.set_status(format!("Adding {name}…"));
+            spawn_create_expression(
+                client.clone(),
+                event_tx.clone(),
+                guild_id,
+                stickers,
+                name,
+                data_uri,
+            );
+        }
+        crate::app::CommunityInput::RenameExpression { stickers, id, text } => {
+            let Some((guild_id, _)) = app.community_expressions() else {
+                return;
+            };
+            let name = text.trim().to_string();
+            if name.len() < 2 {
+                app.set_status("A name is at least two characters.");
+                return;
+            }
+            if let Some(view) = app.community.as_mut() {
+                view.input = None;
+            }
+            app.set_status("Renaming…");
+            spawn_rename_expression(
+                client.clone(),
+                event_tx.clone(),
+                guild_id,
+                stickers,
+                id,
+                name,
+            );
         }
         crate::app::CommunityInput::Search(text) => {
             let query = text.trim().to_string();
@@ -4178,6 +4311,90 @@ fn spawn_close_channel(
             }
             Err(err) => {
                 let _ = event_tx.send(AppEvent::ApiError(format!("Failed to close it: {err}")));
+            }
+        }
+    });
+}
+
+/// Add an emoji or a sticker. GUILD_EMOJIS_UPDATE and
+/// GUILD_STICKERS_UPDATE bring the whole set back, so the list redraws on
+/// its own.
+fn spawn_create_expression(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    stickers: bool,
+    name: String,
+    image: String,
+) {
+    tokio::spawn(async move {
+        let result = if stickers {
+            client
+                .create_guild_sticker(&guild_id, &name, &image)
+                .await
+                .map(|_| ())
+        } else {
+            client
+                .create_guild_emoji(&guild_id, &name, &image)
+                .await
+                .map(|_| ())
+        };
+        match result {
+            Ok(()) => {
+                let _ = event_tx.send(AppEvent::SetStatus(format!("{name} is there.")));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to add it: {err}")));
+            }
+        }
+    });
+}
+
+fn spawn_rename_expression(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    stickers: bool,
+    id: String,
+    name: String,
+) {
+    tokio::spawn(async move {
+        let result = if stickers {
+            client.rename_guild_sticker(&guild_id, &id, &name).await
+        } else {
+            client.rename_guild_emoji(&guild_id, &id, &name).await
+        };
+        match result {
+            Ok(()) => {
+                let _ = event_tx.send(AppEvent::SetStatus("Renamed.".to_string()));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to rename it: {err}")));
+            }
+        }
+    });
+}
+
+fn spawn_delete_expression(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    stickers: bool,
+    id: String,
+    name: String,
+) {
+    tokio::spawn(async move {
+        let result = if stickers {
+            client.delete_guild_sticker(&guild_id, &id).await
+        } else {
+            client.delete_guild_emoji(&guild_id, &id).await
+        };
+        match result {
+            Ok(()) => {
+                let _ = event_tx.send(AppEvent::SetStatus(format!("{name} is gone.")));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to delete it: {err}")));
             }
         }
     });

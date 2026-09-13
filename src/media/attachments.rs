@@ -326,7 +326,9 @@ pub async fn from_clipboard() -> Result<ClipboardContent> {
         .context("clipboard task")?
 }
 
-fn expand_home(path: &str) -> PathBuf {
+/// `~/x` as an absolute path. Used by the attachment staging and by the
+/// profile editor, which both take a path the reader typed.
+pub fn expand_home(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/")
         && let Some(home) = dirs::home_dir()
     {
