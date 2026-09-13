@@ -56,6 +56,18 @@ pub enum AppEvent {
     OwnUserUpdated {
         user: Box<crate::api::types::UserPrivateResponse>,
     },
+    /// Put something on the clipboard from a background task, which has no
+    /// App to do it through.
+    CopyToClipboard {
+        text: String,
+        done: String,
+    },
+    /// A line from the client itself into the open channel, as Fluxerbot:
+    /// what a `/` command that asks the server something has to say back.
+    ClientNotice {
+        channel_id: String,
+        content: String,
+    },
     GuildChannelsLoaded {
         guild_id: String,
         channels: Vec<ChannelResponse>,
@@ -1261,6 +1273,25 @@ pub fn apply_event(
         }
         AppEvent::OwnUserUpdated { user } => {
             app.me = *user;
+        }
+        AppEvent::CopyToClipboard { text, done } => {
+            let clipboard = crate::compose::copy_to_system_clipboard(&text);
+            app.cut_buffer = text;
+            app.set_status(if clipboard {
+                done
+            } else {
+                format!("{done} (no clipboard program, Alt+V pastes it)")
+            });
+        }
+        AppEvent::ClientNotice {
+            channel_id,
+            content,
+        } => {
+            let message = crate::app::client_system_message(app, &channel_id, content);
+            let was_new = app.upsert_message(message);
+            if was_new {
+                app.message_scroll_from_bottom = 0;
+            }
         }
         AppEvent::GuildMembersLoaded { guild_id, members } => {
             app.set_guild_members(&guild_id, members);

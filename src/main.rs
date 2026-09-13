@@ -1494,6 +1494,38 @@ fn handle_input_focus_key(
                     spawn_gif_search(client.clone(), event_tx.clone(), query);
                     return;
                 }
+                if let crate::slash_commands::OutgoingSlash::Export { new } = &resolved {
+                    let new = *new;
+                    app.dismiss_command_autocomplete();
+                    let _ = app.take_input();
+                    app.set_status("Asking about your export…");
+                    spawn_harvest(client.clone(), event_tx.clone(), channel_id.clone(), new);
+                    return;
+                }
+                if matches!(resolved, crate::slash_commands::OutgoingSlash::Connections) {
+                    app.dismiss_command_autocomplete();
+                    let _ = app.take_input();
+                    spawn_connections(client.clone(), event_tx.clone(), channel_id.clone());
+                    return;
+                }
+                if let crate::slash_commands::OutgoingSlash::Gift { code, redeem } = &resolved {
+                    let (code, redeem) = (code.clone(), *redeem);
+                    app.dismiss_command_autocomplete();
+                    let _ = app.take_input();
+                    app.set_status(if redeem {
+                        "Redeeming…"
+                    } else {
+                        "Looking the code up…"
+                    });
+                    spawn_gift(
+                        client.clone(),
+                        event_tx.clone(),
+                        channel_id.clone(),
+                        code,
+                        redeem,
+                    );
+                    return;
+                }
                 if let crate::slash_commands::OutgoingSlash::StickerPick(query) = &resolved {
                     let query = query.clone();
                     app.dismiss_command_autocomplete();
@@ -7126,6 +7158,184 @@ struct Outgoing {
     tts: bool,
     attachments: Vec<StagedAttachment>,
     stickers: Vec<crate::app::StagedSticker>,
+}
+
+/// `/export`: say where the newest data export has got to, and start one
+/// when there has never been one. `/export new` starts another once the
+/// last has finished or failed. Everything it has to say goes into the
+/// channel as a Fluxerbot line, since it is several facts rather than a
+/// status message.
+fn spawn_harvest(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    channel_id: String,
+    new: bool,
+) {
+    tokio::spawn(async move {
+        let notice = |content: String| AppEvent::ClientNotice {
+            channel_id: channel_id.clone(),
+            content,
+        };
+        let latest = match client.latest_harvest().await {
+            Ok(latest) => latest,
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!(
+                    "Could not ask about your export: {err}"
+                )));
+                return;
+            }
+        };
+        let running = latest.as_ref().is_some_and(|l| l.is_running());
+        // nothing yet, or another asked for once the last has run
+        if latest.is_none() || (new && !running) {
+            match client.request_harvest().await {
+                Ok(created) => {
+                    let _ = event_tx.send(notice(format!(
+                        "Your data export has been asked for ({}). The server builds it in the background; `/export` says how it is getting on.",
+                        created.status
+                    )));
+                }
+                Err(err) => {
+                    let _ =
+                        event_tx.send(AppEvent::ApiError(format!("Could not ask for it: {err}")));
+                }
+            }
+            return;
+        }
+        let Some(latest) = latest else {
+            return;
+        };
+        let mut lines = vec![format!(
+            "Your last data export was asked for on **{}** and is **{}**.",
+            latest.created_at, latest.status
+        )];
+        if running {
+            if let Some(progress) = latest.progress_percent.filter(|p| *p > 0.0) {
+                lines.push(format!("It is {progress:.0}% of the way there."));
+            }
+            if new {
+                lines.push("Another can be asked for once this one has run.".to_string());
+            }
+        } else if latest.status == "failed" {
+            if let Some(why) = latest.error_message.as_deref().filter(|w| !w.is_empty()) {
+                lines.push(format!("The server says: {why}"));
+            }
+            lines.push("`/export new` asks for another.".to_string());
+        } else if latest.download_expired() {
+            lines.push(
+                "Its download deadline has passed; `/export new` asks for a fresh one.".to_string(),
+            );
+        } else {
+            // a finished one is worth a fresh address; it is a bearer URL,
+            // so it goes to the cut buffer and is named as a secret
+            match client.harvest_download(&latest.harvest_id).await {
+                Ok(download) => {
+                    lines.push(
+                        "It is ready. The address is on the clipboard: it is a secret, and a new one is minted every time you ask."
+                            .to_string(),
+                    );
+                    let _ = event_tx.send(AppEvent::CopyToClipboard {
+                        text: download.url,
+                        done: "Copied the export's address.".to_string(),
+                    });
+                }
+                Err(err) => {
+                    lines.push(format!("The download address could not be made: {err}"));
+                }
+            }
+            lines.push("`/export new` asks for another.".to_string());
+        }
+        let _ = event_tx.send(notice(lines.join("\n")));
+    });
+}
+
+/// Look a gift code up, and take it when that was asked for.
+fn spawn_gift(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    channel_id: String,
+    code: String,
+    redeem: bool,
+) {
+    tokio::spawn(async move {
+        let notice = |content: String| AppEvent::ClientNotice {
+            channel_id: channel_id.clone(),
+            content,
+        };
+        if redeem {
+            match client.redeem_gift(&code).await {
+                Ok(()) => {
+                    let _ = event_tx.send(notice(
+                        "The gift is yours. USER_UPDATE brings the new state to every client you have open.".to_string(),
+                    ));
+                }
+                Err(err) => {
+                    let _ = event_tx.send(AppEvent::ApiError(format!("Not redeemed: {err}")));
+                }
+            }
+            return;
+        }
+        match client.gift(&code).await {
+            Ok(gift) => {
+                let what = format!("{} {}", gift.duration_quantity, gift.duration_type);
+                let by = gift
+                    .created_by
+                    .as_ref()
+                    .map(|u| format!(" from **{}**", crate::app::display_name(u)))
+                    .unwrap_or_default();
+                let line = if gift.redeemed {
+                    format!("That code ({what}{by}) has already been redeemed.")
+                } else {
+                    format!("That code grants **{what}**{by}. `/gift {code} redeem` takes it.")
+                };
+                let _ = event_tx.send(notice(line));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Could not read it: {err}")));
+            }
+        }
+    });
+}
+
+/// The accounts linked to this one, as a Fluxerbot line. Adding one is a
+/// browser flow, so this is a read.
+fn spawn_connections(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    channel_id: String,
+) {
+    tokio::spawn(async move {
+        match client.connections().await {
+            Ok(connections) if connections.is_empty() => {
+                let _ = event_tx.send(AppEvent::ClientNotice {
+                    channel_id,
+                    content: "No accounts are linked to yours. Linking one is a browser flow, so it is done in the web client.".to_string(),
+                });
+            }
+            Ok(connections) => {
+                let mut lines = vec!["Linked to your account:".to_string()];
+                for connection in connections {
+                    lines.push(format!(
+                        "- **{}** on {}{}",
+                        connection.name,
+                        connection.kind,
+                        if connection.verified {
+                            ""
+                        } else {
+                            " (unverified)"
+                        }
+                    ));
+                }
+                let _ = event_tx.send(AppEvent::ClientNotice {
+                    channel_id,
+                    content: lines.join("\n"),
+                });
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Could not read them: {err}")));
+            }
+        }
+    });
 }
 
 /// Finish the recording and send it as a voice message: one attachment,

@@ -1332,6 +1332,28 @@ second factor, proved on the request. This client logs in by desktop
 handoff and never holds your password, so it does not ask for one; those
 four live in the web client. A **banner** is missing for a different
 reason -- the server gates every profile banner behind premium.
+## Your data, a gift code, your linked accounts
+
+Three `/` commands that ask the server something about your account and put
+the answer in the channel as a Fluxerbot line, because each is a few facts
+rather than a status message.
+
+| Command | What it does |
+| ------- | ------------ |
+| `/export` | Says how your export of everything the server holds about you is getting on, and asks for one if there has never been one. Once it is finished the same command mints a download address and puts it on the clipboard. `/export new` asks for another once the last one has finished or failed; while one is being made it says so instead. |
+| `/gift <code>` | Says what the code grants and who made it, without spending it. `/gift <code> redeem` takes it -- the extra word is there so nothing is redeemed by pressing Enter. |
+| `/connections` | The accounts linked to yours, with the unverified ones marked. |
+
+**An export's download address is a secret.** Each request mints a new
+bearer URL good for seven days, and anybody holding it can fetch the
+archive, so it goes to the clipboard and the line says as much rather than
+printing it into the channel. The archive itself holds your account
+document, your messages channel by channel, your payment history, the
+applications you own and your security log -- metadata for attachments, never
+the files.
+
+Linking an account and the whole of billing are browser flows, so they are
+not here: `/connections` reads, and the web client is where one is added.
 
 ## Message formatting
 

@@ -1440,6 +1440,21 @@ pub struct MessageActionsView {
     pub selected: usize,
 }
 
+/// One line from the client itself into a channel, as Fluxerbot: the
+/// shape the nickname notice already used, for anything else that has to
+/// say something back in the pane rather than in the status line.
+pub fn client_system_message(app: &mut App, channel_id: &str, content: String) -> MessageResponse {
+    MessageResponse {
+        id: app.allocate_local_message_snowflake(channel_id),
+        channel_id: channel_id.to_string(),
+        author: crate::slash_commands::fluxerbot_author(),
+        message_type: crate::slash_commands::MESSAGE_TYPE_CLIENT_SYSTEM,
+        content,
+        timestamp: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        ..Default::default()
+    }
+}
+
 /// Your own profile, as a list of the things that can be changed without
 /// the server's sudo mode: Alt+E.
 #[derive(Debug)]

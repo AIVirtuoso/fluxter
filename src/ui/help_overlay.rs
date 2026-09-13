@@ -80,6 +80,13 @@ Yourself
   /status online|idle|dnd|invisible - your online status
   /customstatus <text> - the line under your name (alone clears it)
 
+Your account
+  /export - how your data export is getting on (asked for, if there was never
+           one); a finished one's download address goes on the clipboard, and
+           it is a secret. /export new asks for another once the last has run
+  /gift <code> - what a gift code grants; /gift <code> redeem takes it
+  /connections - the accounts linked to yours
+
 Servers (left column)
   Up / Down / j / k - move server selection
   n - notification settings for the selected community

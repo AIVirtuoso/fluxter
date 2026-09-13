@@ -1,4 +1,5 @@
 use crate::api::types::UserPartialResponse;
+
 use crate::permissions::{CHANGE_NICKNAME, SEND_TTS_MESSAGES};
 
 pub const FLUXERBOT_ID: &str = "0";
@@ -74,6 +75,27 @@ pub static SLASH_COMMANDS: &[SlashCommandDef] = &[
     SlashCommandDef {
         name: "/gif",
         description: "Send a GIF: /gif alone for what is trending, /gif <words> to search.",
+        simple_append: None,
+        requires_guild: false,
+        requires_channel_perm: None,
+    },
+    SlashCommandDef {
+        name: "/export",
+        description: "Where your data export has got to; /export new asks for another once the last one has finished.",
+        simple_append: None,
+        requires_guild: false,
+        requires_channel_perm: None,
+    },
+    SlashCommandDef {
+        name: "/gift",
+        description: "Look a gift code up: /gift <code>, then /gift <code> redeem to take it.",
+        simple_append: None,
+        requires_guild: false,
+        requires_channel_perm: None,
+    },
+    SlashCommandDef {
+        name: "/connections",
+        description: "The accounts linked to yours, as your profile shows them.",
         simple_append: None,
         requires_guild: false,
         requires_channel_perm: None,
@@ -162,6 +184,17 @@ pub enum OutgoingSlash {
     AttachPick,
     /// Open the sticker picker, filtered by what came after the command.
     StickerPick(String),
+    /// Report the last data export's state, or with `new` ask for another.
+    Export {
+        new: bool,
+    },
+    /// Look a gift code up, and take it when `redeem` is set.
+    Gift {
+        code: String,
+        redeem: bool,
+    },
+    /// List the accounts linked to this one.
+    Connections,
     /// Open the GIF picker, with what follows as the search.
     GifPick(String),
     /// Open the debug panel.
@@ -274,6 +307,39 @@ pub fn resolve_outgoing_slash(
     }
     if let Some(rest) = t.strip_prefix("/gif ") {
         return OutgoingSlash::GifPick(rest.trim().to_string());
+    }
+    if t == "/export" {
+        return OutgoingSlash::Export { new: false };
+    }
+    if t == "/export new" {
+        return OutgoingSlash::Export { new: true };
+    }
+    if t == "/connections" {
+        return OutgoingSlash::Connections;
+    }
+    if t == "/gift" || t.starts_with("/gift ") {
+        let rest = t["/gift".len()..].trim();
+        if rest.is_empty() {
+            return OutgoingSlash::Blocked(
+                "Give a code: /gift <code>, and /gift <code> redeem takes it.".to_string(),
+            );
+        }
+        // "<code> redeem" takes it; a code on its own only looks it up, so
+        // nobody spends a gift by pressing Enter
+        if rest.eq_ignore_ascii_case("redeem") {
+            return OutgoingSlash::Blocked("Give a code before `redeem`.".to_string());
+        }
+        let (code, redeem) = match rest.rsplit_once(char::is_whitespace) {
+            Some((head, tail)) if tail.eq_ignore_ascii_case("redeem") => (head.trim(), true),
+            _ => (rest, false),
+        };
+        if code.is_empty() {
+            return OutgoingSlash::Blocked("Give a code before `redeem`.".to_string());
+        }
+        return OutgoingSlash::Gift {
+            code: code.to_string(),
+            redeem,
+        };
     }
     if t == "/debug" {
         return OutgoingSlash::Debug;
@@ -405,5 +471,60 @@ mod tests {
         // the server takes 128 characters, so a longer one is stopped here
         let long = format!("/customstatus {}", "x".repeat(129));
         assert!(matches!(pick(&long), OutgoingSlash::Blocked(_)));
+    }
+}
+
+#[cfg(test)]
+mod account_extras_tests {
+    use super::*;
+
+    fn parse(input: &str) -> OutgoingSlash {
+        resolve_outgoing_slash(input, None, "me", "me", u64::MAX)
+    }
+
+    /// A code on its own only looks the gift up. Spending it takes the word
+    /// `redeem`, so nobody gives a gift away by pressing Enter.
+    #[test]
+    fn a_gift_is_looked_up_unless_redeem_is_asked_for() {
+        assert!(matches!(
+            parse("/gift ABC123"),
+            OutgoingSlash::Gift { redeem: false, .. }
+        ));
+        let OutgoingSlash::Gift { code, redeem } = parse("/gift ABC123 redeem") else {
+            panic!("redeem should parse");
+        };
+        assert_eq!(code, "ABC123");
+        assert!(redeem);
+        // and the case of the word does not matter
+        assert!(matches!(
+            parse("/gift ABC123 REDEEM"),
+            OutgoingSlash::Gift { redeem: true, .. }
+        ));
+    }
+
+    #[test]
+    fn a_gift_with_no_code_says_so_rather_than_sending_anything() {
+        assert!(matches!(parse("/gift"), OutgoingSlash::Blocked(_)));
+        assert!(matches!(parse("/gift   "), OutgoingSlash::Blocked(_)));
+        assert!(matches!(parse("/gift redeem"), OutgoingSlash::Blocked(_)));
+    }
+
+    #[test]
+    fn export_reports_unless_told_to_start_another() {
+        assert!(matches!(
+            parse("/export"),
+            OutgoingSlash::Export { new: false }
+        ));
+        assert!(matches!(
+            parse("/export new"),
+            OutgoingSlash::Export { new: true }
+        ));
+        assert!(matches!(parse("/connections"), OutgoingSlash::Connections));
+    }
+
+    /// `/giftwrap` is not a gift command with the code "wrap".
+    #[test]
+    fn a_command_that_merely_starts_with_gift_is_not_one() {
+        assert!(!matches!(parse("/giftwrap"), OutgoingSlash::Gift { .. }));
     }
 }

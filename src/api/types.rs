@@ -394,7 +394,8 @@ pub struct MutualGuildResponse {
     pub nick: Option<String>,
 }
 
-/// A verified external account shown on a profile.
+/// A verified external account shown on a profile, and the same shape the
+/// reader's own linked accounts come back in.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ConnectionResponse {
     #[serde(default, rename = "type")]
@@ -403,6 +404,10 @@ pub struct ConnectionResponse {
     pub name: String,
     #[serde(default)]
     pub verified: bool,
+    /// Whether it is shown on the public profile; only the reader's own
+    /// connections carry it.
+    #[serde(default)]
+    pub visibility: Option<i32>,
 }
 
 /// `GET /users/{id}/profile`: what the web app's profile popup shows.
@@ -1767,6 +1772,83 @@ impl RelationshipResponse {
 /// Bit 2 of a message's `flags`: the server leaves the embeds out of
 /// the message when it is set, which is what "suppress embeds" does.
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
+
+/// `POST /users/@me/harvest`: the export was asked for and is being made.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HarvestCreationResponse {
+    #[serde(default, deserialize_with = "deserialize_snowflake_string")]
+    pub harvest_id: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub created_at: String,
+}
+
+/// Where one export has got to.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HarvestStatusResponse {
+    #[serde(default, deserialize_with = "deserialize_snowflake_string")]
+    pub harvest_id: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub failed_at: Option<String>,
+    /// 0 to 100 while it is being made.
+    #[serde(default)]
+    pub progress_percent: Option<f64>,
+    #[serde(default)]
+    pub error_message: Option<String>,
+    /// When a finished archive stops being downloadable: seven days after
+    /// it was written.
+    #[serde(default)]
+    pub download_url_expires_at: Option<String>,
+}
+
+impl HarvestStatusResponse {
+    /// Whether the server is still working on it.
+    pub fn is_running(&self) -> bool {
+        matches!(self.status.as_str(), "pending" | "processing")
+    }
+
+    /// Whether the archive's download deadline has passed.
+    pub fn download_expired(&self) -> bool {
+        self.download_url_expires_at
+            .as_deref()
+            .and_then(|t| t.parse::<chrono::DateTime<chrono::Utc>>().ok())
+            .is_some_and(|t| t <= chrono::Utc::now())
+    }
+}
+
+/// The temporary address one finished export can be fetched from. Every
+/// call mints a new one and each is a bearer URL, so it is handled like a
+/// credential.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HarvestDownloadResponse {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+}
+
+/// A gift code before it is redeemed: how much it grants, and whether
+/// somebody has already used it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GiftResponse {
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub duration_type: String,
+    #[serde(default)]
+    pub duration_quantity: i64,
+    #[serde(default)]
+    pub redeemed: bool,
+    #[serde(default)]
+    pub created_by: Option<UserPartialResponse>,
+}
 
 /// `message_reference.type`: 0 is a reply to the message it names, 1 is a
 /// forward of it, whose content arrives as `message_snapshots`.
