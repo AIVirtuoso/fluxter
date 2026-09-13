@@ -60,8 +60,9 @@ Focus & navigation
            (see README, "Voice").
 
 Your account
-  /export - ask for a data export, or see how the last one is getting on; its
-           download address goes on the clipboard, and it is a secret
+  /export - how your data export is getting on (asked for, if there was never
+           one); a finished one's download address goes on the clipboard, and
+           it is a secret. /export new asks for another once the last has run
   /gift <code> - what a gift code grants; /gift <code> redeem takes it
   /connections - the accounts linked to yours
 

@@ -1593,9 +1593,32 @@ pub struct HarvestStatusResponse {
     pub created_at: String,
     #[serde(default)]
     pub completed_at: Option<String>,
+    #[serde(default)]
+    pub failed_at: Option<String>,
     /// 0 to 100 while it is being made.
     #[serde(default)]
-    pub progress: Option<i64>,
+    pub progress_percent: Option<f64>,
+    #[serde(default)]
+    pub error_message: Option<String>,
+    /// When a finished archive stops being downloadable: seven days after
+    /// it was written.
+    #[serde(default)]
+    pub download_url_expires_at: Option<String>,
+}
+
+impl HarvestStatusResponse {
+    /// Whether the server is still working on it.
+    pub fn is_running(&self) -> bool {
+        matches!(self.status.as_str(), "pending" | "processing")
+    }
+
+    /// Whether the archive's download deadline has passed.
+    pub fn download_expired(&self) -> bool {
+        self.download_url_expires_at
+            .as_deref()
+            .and_then(|t| t.parse::<chrono::DateTime<chrono::Utc>>().ok())
+            .is_some_and(|t| t <= chrono::Utc::now())
+    }
 }
 
 /// The temporary address one finished export can be fetched from. Every

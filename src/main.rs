@@ -1445,11 +1445,12 @@ fn handle_input_focus_key(
                     app.open_file_picker();
                     return;
                 }
-                if matches!(resolved, crate::slash_commands::OutgoingSlash::Export) {
+                if let crate::slash_commands::OutgoingSlash::Export { new } = &resolved {
+                    let new = *new;
                     app.dismiss_command_autocomplete();
                     let _ = app.take_input();
                     app.set_status("Asking about your export…");
-                    spawn_harvest(client.clone(), event_tx.clone(), channel_id.clone());
+                    spawn_harvest(client.clone(), event_tx.clone(), channel_id.clone(), new);
                     return;
                 }
                 if matches!(resolved, crate::slash_commands::OutgoingSlash::Connections) {
@@ -5182,53 +5183,35 @@ struct Outgoing {
     stickers: Vec<crate::app::StagedSticker>,
 }
 
-/// Ask about the newest data export, and start one when there is none.
-/// Everything it has to say goes into the channel as a Fluxerbot line,
-/// since it is several facts rather than a status message.
+/// `/export`: say where the newest data export has got to, and start one
+/// when there has never been one. `/export new` starts another once the
+/// last has finished or failed. Everything it has to say goes into the
+/// channel as a Fluxerbot line, since it is several facts rather than a
+/// status message.
 fn spawn_harvest(
     client: FluxerHttpClient,
     event_tx: UnboundedSender<AppEvent>,
     channel_id: String,
+    new: bool,
 ) {
     tokio::spawn(async move {
         let notice = |content: String| AppEvent::ClientNotice {
             channel_id: channel_id.clone(),
             content,
         };
-        match client.latest_harvest().await {
-            Ok(latest) if !latest.harvest_id.is_empty() => {
-                let asked = latest.created_at.clone();
-                let mut lines = vec![format!(
-                    "Your last data export was asked for on **{asked}** and is **{}**.",
-                    latest.status
-                )];
-                if let Some(progress) = latest.progress.filter(|p| *p > 0 && *p < 100) {
-                    lines.push(format!("It is {progress}% of the way there."));
-                }
-                // a finished one is worth a fresh address; it is a bearer
-                // URL, so it goes to the cut buffer and is named as a secret
-                if latest.completed_at.is_some() {
-                    match client.harvest_download(&latest.harvest_id).await {
-                        Ok(download) => {
-                            lines.push(
-                                "It is ready. The address is on the clipboard: it is a secret, and a new one is minted every time you ask."
-                                    .to_string(),
-                            );
-                            let _ = event_tx.send(AppEvent::CopyToClipboard {
-                                text: download.url,
-                                done: "Copied the export's address.".to_string(),
-                            });
-                        }
-                        Err(err) => {
-                            lines.push(format!("The download address could not be made: {err}"));
-                        }
-                    }
-                }
-                lines.push("`/export` again starts a new one once this has run.".to_string());
-                let _ = event_tx.send(notice(lines.join("\n")));
+        let latest = match client.latest_harvest().await {
+            Ok(latest) => latest,
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!(
+                    "Could not ask about your export: {err}"
+                )));
+                return;
             }
-            // no export yet, or none the server still holds: start one
-            _ => match client.request_harvest().await {
+        };
+        let running = latest.as_ref().is_some_and(|l| l.is_running());
+        // nothing yet, or another asked for once the last has run
+        if latest.is_none() || (new && !running) {
+            match client.request_harvest().await {
                 Ok(created) => {
                     let _ = event_tx.send(notice(format!(
                         "Your data export has been asked for ({}). The server builds it in the background; `/export` says how it is getting on.",
@@ -5239,8 +5222,53 @@ fn spawn_harvest(
                     let _ =
                         event_tx.send(AppEvent::ApiError(format!("Could not ask for it: {err}")));
                 }
-            },
+            }
+            return;
         }
+        let Some(latest) = latest else {
+            return;
+        };
+        let mut lines = vec![format!(
+            "Your last data export was asked for on **{}** and is **{}**.",
+            latest.created_at, latest.status
+        )];
+        if running {
+            if let Some(progress) = latest.progress_percent.filter(|p| *p > 0.0) {
+                lines.push(format!("It is {progress:.0}% of the way there."));
+            }
+            if new {
+                lines.push("Another can be asked for once this one has run.".to_string());
+            }
+        } else if latest.status == "failed" {
+            if let Some(why) = latest.error_message.as_deref().filter(|w| !w.is_empty()) {
+                lines.push(format!("The server says: {why}"));
+            }
+            lines.push("`/export new` asks for another.".to_string());
+        } else if latest.download_expired() {
+            lines.push(
+                "Its download deadline has passed; `/export new` asks for a fresh one.".to_string(),
+            );
+        } else {
+            // a finished one is worth a fresh address; it is a bearer URL,
+            // so it goes to the cut buffer and is named as a secret
+            match client.harvest_download(&latest.harvest_id).await {
+                Ok(download) => {
+                    lines.push(
+                        "It is ready. The address is on the clipboard: it is a secret, and a new one is minted every time you ask."
+                            .to_string(),
+                    );
+                    let _ = event_tx.send(AppEvent::CopyToClipboard {
+                        text: download.url,
+                        done: "Copied the export's address.".to_string(),
+                    });
+                }
+                Err(err) => {
+                    lines.push(format!("The download address could not be made: {err}"));
+                }
+            }
+            lines.push("`/export new` asks for another.".to_string());
+        }
+        let _ = event_tx.send(notice(lines.join("\n")));
     });
 }
 

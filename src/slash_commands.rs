@@ -73,7 +73,7 @@ pub static SLASH_COMMANDS: &[SlashCommandDef] = &[
     },
     SlashCommandDef {
         name: "/export",
-        description: "Ask the server for an export of your data, or say where the last one got to.",
+        description: "Where your data export has got to; /export new asks for another once the last one has finished.",
         simple_append: None,
         requires_guild: false,
         requires_channel_perm: None,
@@ -176,8 +176,10 @@ pub enum OutgoingSlash {
     AttachPick,
     /// Open the sticker picker, filtered by what came after the command.
     StickerPick(String),
-    /// Ask for a data export, or report the last one's state.
-    Export,
+    /// Report the last data export's state, or with `new` ask for another.
+    Export {
+        new: bool,
+    },
     /// Look a gift code up, and take it when `redeem` is set.
     Gift {
         code: String,
@@ -291,13 +293,16 @@ pub fn resolve_outgoing_slash(
         return OutgoingSlash::StickerPick(rest.trim().to_string());
     }
     if t == "/export" {
-        return OutgoingSlash::Export;
+        return OutgoingSlash::Export { new: false };
+    }
+    if t == "/export new" {
+        return OutgoingSlash::Export { new: true };
     }
     if t == "/connections" {
         return OutgoingSlash::Connections;
     }
-    if let Some(rest) = t.strip_prefix("/gift") {
-        let rest = rest.trim();
+    if t == "/gift" || t.starts_with("/gift ") {
+        let rest = t["/gift".len()..].trim();
         if rest.is_empty() {
             return OutgoingSlash::Blocked(
                 "Give a code: /gift <code>, and /gift <code> redeem takes it.".to_string(),
@@ -489,8 +494,21 @@ mod account_extras_tests {
     }
 
     #[test]
-    fn the_other_two_take_nothing() {
-        assert!(matches!(parse("/export"), OutgoingSlash::Export));
+    fn export_reports_unless_told_to_start_another() {
+        assert!(matches!(
+            parse("/export"),
+            OutgoingSlash::Export { new: false }
+        ));
+        assert!(matches!(
+            parse("/export new"),
+            OutgoingSlash::Export { new: true }
+        ));
         assert!(matches!(parse("/connections"), OutgoingSlash::Connections));
+    }
+
+    /// `/giftwrap` is not a gift command with the code "wrap".
+    #[test]
+    fn a_command_that_merely_starts_with_gift_is_not_one() {
+        assert!(!matches!(parse("/giftwrap"), OutgoingSlash::Gift { .. }));
     }
 }

@@ -1021,7 +1021,7 @@ rather than a status message.
 
 | Command | What it does |
 | ------- | ------------ |
-| `/export` | Asks for an export of everything the server holds about you, or, when one is already in hand, says how it is getting on. Once it is finished the same command mints a download address and puts it on the clipboard. |
+| `/export` | Says how your export of everything the server holds about you is getting on, and asks for one if there has never been one. Once it is finished the same command mints a download address and puts it on the clipboard. `/export new` asks for another once the last one has finished or failed; while one is being made it says so instead. |
 | `/gift <code>` | Says what the code grants and who made it, without spending it. `/gift <code> redeem` takes it -- the extra word is there so nothing is redeemed by pressing Enter. |
 | `/connections` | The accounts linked to yours, with the unverified ones marked. |
 

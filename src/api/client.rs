@@ -165,9 +165,10 @@ impl FluxerHttpClient {
         .await
     }
 
-    /// The newest export and where it has got to. 404 when there is none.
-    pub async fn latest_harvest(&self) -> Result<crate::api::types::HarvestStatusResponse> {
-        self.send_json::<(), (), crate::api::types::HarvestStatusResponse>(
+    /// The newest export and where it has got to. The server answers 200
+    /// with a bare `null` when there has never been one.
+    pub async fn latest_harvest(&self) -> Result<Option<crate::api::types::HarvestStatusResponse>> {
+        self.send_json::<(), (), Option<crate::api::types::HarvestStatusResponse>>(
             Method::GET,
             "/users/@me/harvest/latest",
             None::<&()>,
