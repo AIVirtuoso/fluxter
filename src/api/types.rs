@@ -46,6 +46,16 @@ where
     deserializer.deserialize_any(RoleColorVisitor)
 }
 
+/// A list that the server may send as `null` rather than leave out: null
+/// and absent both read as empty.
+fn deserialize_null_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 fn deserialize_snowflake_string<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -849,7 +859,9 @@ pub struct MessageResponse {
     /// The forwarded copies a FORWARD reference carries. A forward leaves
     /// `referenced_message` unset and puts everything the reader is meant
     /// to see here, so a client that ignores these shows an empty message.
-    #[serde(default)]
+    /// The schema declares the field nullable, and a `null` here must not
+    /// take the whole message down with it.
+    #[serde(default, deserialize_with = "deserialize_null_vec")]
     pub message_snapshots: Vec<MessageSnapshotResponse>,
     #[serde(default)]
     pub member: Option<GuildMemberResponse>,
@@ -1980,5 +1992,25 @@ mod user_guild_settings_tests {
                 "mute_config": {"end_time": "2026-09-07T12:00:00.000Z", "selected_time_window": 900000}
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod snapshot_field_tests {
+    use super::MessageResponse;
+
+    /// The response schema marks `message_snapshots` nullable, so a null
+    /// is an ordinary message with nothing forwarded, not a decode error
+    /// that drops the message.
+    #[test]
+    fn a_null_snapshot_list_is_an_empty_one() {
+        let json = r#"{"id":"1","channel_id":"c","author":{"id":"a","username":"a"},
+            "content":"hi","timestamp":"2026-09-13T10:00:00.000Z","message_snapshots":null}"#;
+        let message: MessageResponse = serde_json::from_str(json).unwrap();
+        assert!(message.message_snapshots.is_empty());
+        let json = r#"{"id":"1","channel_id":"c","author":{"id":"a","username":"a"},
+            "content":"hi","timestamp":"2026-09-13T10:00:00.000Z"}"#;
+        let message: MessageResponse = serde_json::from_str(json).unwrap();
+        assert!(message.message_snapshots.is_empty());
     }
 }
