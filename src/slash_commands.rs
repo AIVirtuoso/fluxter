@@ -72,6 +72,13 @@ pub static SLASH_COMMANDS: &[SlashCommandDef] = &[
         requires_channel_perm: None,
     },
     SlashCommandDef {
+        name: "/gif",
+        description: "Send a GIF: /gif alone for what is trending, /gif <words> to search.",
+        simple_append: None,
+        requires_guild: false,
+        requires_channel_perm: None,
+    },
+    SlashCommandDef {
         name: "/debug",
         description: "Debug panel: session facts and the last log lines (/debug save writes them to a file, /debug frame maps the screen into the log).",
         simple_append: None,
@@ -155,6 +162,8 @@ pub enum OutgoingSlash {
     AttachPick,
     /// Open the sticker picker, filtered by what came after the command.
     StickerPick(String),
+    /// Open the GIF picker, with what follows as the search.
+    GifPick(String),
     /// Open the debug panel.
     Debug,
     /// Write the debug panel's facts and log lines to a file.
@@ -259,6 +268,12 @@ pub fn resolve_outgoing_slash(
     }
     if let Some(rest) = t.strip_prefix("/sticker ") {
         return OutgoingSlash::StickerPick(rest.trim().to_string());
+    }
+    if t == "/gif" {
+        return OutgoingSlash::GifPick(String::new());
+    }
+    if let Some(rest) = t.strip_prefix("/gif ") {
+        return OutgoingSlash::GifPick(rest.trim().to_string());
     }
     if t == "/debug" {
         return OutgoingSlash::Debug;

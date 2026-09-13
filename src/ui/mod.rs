@@ -8,6 +8,7 @@ pub mod emoji_popup;
 pub mod file_picker;
 pub mod footer;
 pub mod friends_overlay;
+pub mod gif_picker;
 pub mod help_overlay;
 pub mod image_preview;
 pub mod input_bar;
@@ -163,6 +164,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         file_picker::render(frame, area, app);
     } else if app.sticker_picker.is_some() {
         sticker_picker::render(frame, area, app);
+    } else if app.gif_picker.is_some() {
+        gif_picker::render(frame, area, app);
     } else if app.channel_picker.is_some() {
         channel_picker::render(frame, area, app);
     }

@@ -1729,6 +1729,80 @@ pub struct AuthSessionResponse {
     pub approx_last_used_at: Option<String>,
 }
 
+/// One format of a GIF: the provider's own URL and the media proxy's, with
+/// the size of that format.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GifMediaFormat {
+    #[serde(default)]
+    pub src: String,
+    #[serde(default)]
+    pub proxy_src: String,
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+}
+
+/// One GIF the provider owns. `src` is the format the server chose, which
+/// is the webm where there is one -- so the format to *show* in a terminal
+/// is picked out of `media` instead.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GifResponse {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub title: String,
+    /// The provider's page for it.
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub src: String,
+    #[serde(default)]
+    pub proxy_src: String,
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+    #[serde(default)]
+    pub media: HashMap<String, GifMediaFormat>,
+}
+
+impl GifResponse {
+    /// The format to draw in the terminal: a still or animated GIF rather
+    /// than a video, smallest first, since a picker row is a few cells
+    /// tall. None when the provider proxied nothing a terminal can show.
+    pub fn preview_format(&self) -> Option<&GifMediaFormat> {
+        ["nanogif", "tinygif", "gif", "mediumgif"]
+            .iter()
+            .find_map(|name| self.media.get(*name))
+            .filter(|format| !format.proxy_src.is_empty())
+    }
+
+    /// The provider's name for the row beside the picture, or "a provider"
+    /// where it sent none.
+    pub fn provider_label(&self) -> String {
+        if self.provider.trim().is_empty() {
+            "a provider".to_string()
+        } else {
+            self.provider.clone()
+        }
+    }
+
+    /// What to put in a message to send it: the provider's own URL, which
+    /// is what the server unfurls into a moving picture.
+    pub fn share_url(&self) -> &str {
+        if self.url.is_empty() {
+            &self.src
+        } else {
+            &self.url
+        }
+    }
+}
+
 /// One entry of `GET /channels/{id}/messages/pins`: the message and when
 /// it was pinned (which is not the message's own timestamp).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

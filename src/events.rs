@@ -23,6 +23,14 @@ pub enum AppEvent {
     SessionsFailed {
         message: String,
     },
+    GifsLoaded {
+        query: String,
+        gifs: Vec<crate::api::types::GifResponse>,
+    },
+    GifsFailed {
+        query: String,
+        message: String,
+    },
     GuildChannelsLoaded {
         guild_id: String,
         channels: Vec<ChannelResponse>,
@@ -1165,6 +1173,12 @@ pub fn apply_event(
         }
         AppEvent::SessionsFailed { message } => {
             app.set_sessions_failed(message);
+        }
+        AppEvent::GifsLoaded { query, gifs } => {
+            app.set_gifs_loaded(&query, gifs);
+        }
+        AppEvent::GifsFailed { query, message } => {
+            app.set_gifs_failed(&query, message);
         }
         AppEvent::GuildMembersLoaded { guild_id, members } => {
             app.set_guild_members(&guild_id, members);

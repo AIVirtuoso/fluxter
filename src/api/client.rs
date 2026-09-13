@@ -1080,6 +1080,53 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// GIFs matching a search term, at most fifty, in the provider's own
+    /// order.
+    pub async fn search_gifs(&self, query: &str) -> Result<Vec<crate::api::types::GifResponse>> {
+        #[derive(Serialize)]
+        struct Query<'a> {
+            q: &'a str,
+        }
+        self.send_json::<Query, (), Vec<crate::api::types::GifResponse>>(
+            Method::GET,
+            "/gifs/search",
+            Some(&Query { q: query.trim() }),
+            None,
+            false,
+        )
+        .await
+    }
+
+    /// What the provider is pushing at the moment, for a picker opened
+    /// with nothing typed.
+    pub async fn trending_gifs(&self) -> Result<Vec<crate::api::types::GifResponse>> {
+        self.send_json::<(), (), Vec<crate::api::types::GifResponse>>(
+            Method::GET,
+            "/gifs/trending",
+            None::<&()>,
+            None,
+            false,
+        )
+        .await
+    }
+
+    /// Tell the provider one of its GIFs was shared. It changes nothing
+    /// for the reader and is what the provider's terms ask for, so a
+    /// failure is logged and otherwise ignored.
+    pub async fn register_gif_share(&self, id: &str) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            id: &'a str,
+        }
+        self.send_empty(
+            Method::POST,
+            "/gifs/register-share",
+            Some(&Body { id }),
+            "register the share",
+        )
+        .await
+    }
+
     /// Leave a community. The reader cannot leave one they own; the
     /// server says so.
     pub async fn leave_guild(&self, guild_id: &str) -> Result<()> {
