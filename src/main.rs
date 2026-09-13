@@ -2050,6 +2050,40 @@ fn handle_key_event(
                     );
                 }
             }
+            KeyCode::Char('+') if app.community_webhooks_guild().is_some() => {
+                if let Some(view) = app.community.as_mut() {
+                    view.input = Some(crate::app::CommunityInput::NewWebhook(String::new()));
+                }
+            }
+            KeyCode::Char('r') if app.community_selected_webhook().is_some() => {
+                if let Some(hook) = app.community_selected_webhook()
+                    && let Some(view) = app.community.as_mut()
+                {
+                    view.input = Some(crate::app::CommunityInput::RenameWebhook {
+                        webhook_id: hook.id,
+                        text: hook.name,
+                    });
+                }
+            }
+            // the address carries the token, so it goes to the clipboard
+            // and never to the screen or the debug log
+            KeyCode::Char('y') if app.community_selected_webhook().is_some() => {
+                if let Some(hook) = app.community_selected_webhook() {
+                    let url = app.webhook_url(&hook.id, &hook.token);
+                    let clipboard = crate::compose::copy_to_system_clipboard(&url);
+                    app.cut_buffer = url;
+                    app.set_status(if clipboard {
+                        "Copied its address. It is a secret: anything holding it can post as it."
+                    } else {
+                        "Copied its address (no clipboard program, Alt+V pastes it). It is a secret."
+                    });
+                }
+            }
+            // x asks first: deleting a webhook is the one way its address
+            // is revoked, and it does not come back
+            KeyCode::Char('x') | KeyCode::Delete if app.community_selected_webhook().is_some() => {
+                app.ask_webhook_delete();
+            }
             KeyCode::Char('+') => {
                 // a new invite is always to the channel now open, which
                 // is the only one the reader has said anything about
@@ -4025,6 +4059,21 @@ fn run_community_action(
     let Some(action) = app.community_selected_action() else {
         return;
     };
+    // the webhook deletion question: Enter on "Yes" deletes, on "No" goes
+    // back to the list
+    if let Some((guild_id, webhook_id, name, yes)) = app.community_webhook_delete_choice() {
+        app.community_back();
+        if yes {
+            app.set_status(format!("Deleting {name}…"));
+            spawn_webhook_change(
+                client.clone(),
+                event_tx.clone(),
+                guild_id,
+                WebhookChange::Delete { webhook_id, name },
+            );
+        }
+        return;
+    }
     match action {
         crate::app::CommunityAction::Join => {
             if let Some(view) = app.community.as_mut() {
@@ -4118,6 +4167,13 @@ fn run_community_action(
             app.dismiss_communities();
             app.set_status("Leaving…");
             spawn_leave_guild(client.clone(), event_tx.clone(), guild_id);
+        }
+        crate::app::CommunityAction::Webhooks => {
+            let Some(guild_id) = app.active_guild_id() else {
+                return;
+            };
+            app.open_guild_webhooks(guild_id.clone());
+            spawn_guild_webhooks(client.clone(), event_tx.clone(), guild_id);
         }
     }
 }
@@ -4608,6 +4664,45 @@ fn run_community_input(
                 (!code.is_empty()).then_some(code),
             );
         }
+        crate::app::CommunityInput::NewWebhook(text) => {
+            let Some(guild_id) = app.community_webhooks_guild() else {
+                return;
+            };
+            let Some(channel_id) = app.active_channel_id() else {
+                app.set_status("Open the channel it should post into first.");
+                return;
+            };
+            let name = text.trim().to_string();
+            if name.is_empty() {
+                app.set_status("Give it a name.");
+                return;
+            }
+            if let Some(view) = app.community.as_mut() {
+                view.input = None;
+            }
+            app.set_status(format!("Making {name}…"));
+            spawn_create_webhook(client.clone(), event_tx.clone(), guild_id, channel_id, name);
+        }
+        crate::app::CommunityInput::RenameWebhook { webhook_id, text } => {
+            let Some(guild_id) = app.community_webhooks_guild() else {
+                return;
+            };
+            let name = text.trim().to_string();
+            if name.is_empty() {
+                app.set_status("Give it a name.");
+                return;
+            }
+            if let Some(view) = app.community.as_mut() {
+                view.input = None;
+            }
+            app.set_status("Renaming…");
+            spawn_webhook_change(
+                client.clone(),
+                event_tx.clone(),
+                guild_id,
+                WebhookChange::Rename { webhook_id, name },
+            );
+        }
     }
 }
 
@@ -4938,6 +5033,26 @@ fn spawn_guild_bans(
         }
     });
 }
+fn spawn_guild_webhooks(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+) {
+    tokio::spawn(async move {
+        match client.guild_webhooks(&guild_id).await {
+            Ok(hooks) => {
+                debug::log("webhook", format!("{} in the community", hooks.len()));
+                let _ = event_tx.send(AppEvent::GuildWebhooksLoaded { guild_id, hooks });
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::GuildWebhooksFailed {
+                    guild_id,
+                    message: format!("Could not read them: {err}"),
+                });
+            }
+        }
+    });
+}
 
 /// Change a channel's name, topic or slowmode; CHANNEL_UPDATE brings the
 /// change back over the gateway.
@@ -4956,6 +5071,65 @@ fn spawn_modify_channel(
             }
             Err(err) => {
                 let _ = event_tx.send(AppEvent::ApiError(format!("Failed to change it: {err}")));
+            }
+        }
+    });
+}
+/// Make a webhook, then read the list again so its row appears with the
+/// token the creation handed back.
+fn spawn_create_webhook(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    channel_id: String,
+    name: String,
+) {
+    tokio::spawn(async move {
+        match client.create_webhook(&channel_id, &name).await {
+            Ok(hook) => {
+                let _ = event_tx.send(AppEvent::SetStatus(format!(
+                    "{} is there; y copies its address.",
+                    hook.name
+                )));
+                reload_webhooks(&client, &event_tx, guild_id).await;
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to make it: {err}")));
+            }
+        }
+    });
+}
+
+/// What a webhook row's keys do, as one thing so both end in a reload.
+enum WebhookChange {
+    Rename { webhook_id: String, name: String },
+    Delete { webhook_id: String, name: String },
+}
+
+fn spawn_webhook_change(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    change: WebhookChange,
+) {
+    tokio::spawn(async move {
+        let (result, done) = match change {
+            WebhookChange::Rename { webhook_id, name } => (
+                client.rename_webhook(&webhook_id, &name).await,
+                "Renamed.".to_string(),
+            ),
+            WebhookChange::Delete { webhook_id, name } => (
+                client.delete_webhook(&webhook_id).await,
+                format!("{name} is gone."),
+            ),
+        };
+        match result {
+            Ok(()) => {
+                let _ = event_tx.send(AppEvent::SetStatus(done));
+                reload_webhooks(&client, &event_tx, guild_id).await;
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed: {err}")));
             }
         }
     });
@@ -5111,6 +5285,23 @@ fn spawn_guild_audit_log(
             }
         }
     });
+}
+async fn reload_webhooks(
+    client: &FluxerHttpClient,
+    event_tx: &UnboundedSender<AppEvent>,
+    guild_id: String,
+) {
+    match client.guild_webhooks(&guild_id).await {
+        Ok(hooks) => {
+            let _ = event_tx.send(AppEvent::GuildWebhooksLoaded { guild_id, hooks });
+        }
+        Err(err) => {
+            let _ = event_tx.send(AppEvent::GuildWebhooksFailed {
+                guild_id,
+                message: format!("Could not read them: {err}"),
+            });
+        }
+    }
 }
 
 fn spawn_create_guild(client: FluxerHttpClient, event_tx: UnboundedSender<AppEvent>, name: String) {

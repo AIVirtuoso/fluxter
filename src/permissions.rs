@@ -17,6 +17,8 @@ pub const MANAGE_NICKNAMES: u64 = 1 << 27;
 pub const MANAGE_ROLES: u64 = 1 << 28;
 /// Applying and clearing a member's communication timeout.
 pub const MODERATE_MEMBERS: u64 = 1 << 40;
+/// Making, changing and deleting a webhook on a channel.
+pub const MANAGE_WEBHOOKS: u64 = 1 << 29;
 
 /// Kept in sync with the API
 #[allow(dead_code)]

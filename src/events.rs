@@ -39,6 +39,14 @@ pub enum AppEvent {
         guild_id: String,
         message: String,
     },
+    GuildWebhooksLoaded {
+        guild_id: String,
+        hooks: Vec<crate::api::types::WebhookResponse>,
+    },
+    GuildWebhooksFailed {
+        guild_id: String,
+        message: String,
+    },
     GuildChannelsLoaded {
         guild_id: String,
         channels: Vec<ChannelResponse>,
@@ -1235,6 +1243,12 @@ pub fn apply_event(
         }
         AppEvent::GuildAuditLogFailed { guild_id, message } => {
             app.set_guild_audit_log_failed(&guild_id, message);
+        }
+        AppEvent::GuildWebhooksLoaded { guild_id, hooks } => {
+            app.set_guild_webhooks(&guild_id, hooks);
+        }
+        AppEvent::GuildWebhooksFailed { guild_id, message } => {
+            app.set_guild_webhooks_failed(&guild_id, message);
         }
         AppEvent::GuildMembersLoaded { guild_id, members } => {
             app.set_guild_members(&guild_id, members);

@@ -4,6 +4,7 @@
 
 use crate::app::{
     App, AuditLogState, BansState, CommunityMode, DiscoverState, InvitesState, VanityState,
+    WebhooksState,
 };
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -572,6 +573,104 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 format!(" Lately in {name} "),
                 rows,
                 "\u{2191}/\u{2193} move  \u{b7}  R reload  \u{b7}  Esc back".to_string(),
+            )
+        }
+        CommunityMode::ConfirmWebhookDelete { name, .. } => {
+            let rows = [
+                (
+                    format!("Yes, delete {name}; its address stops working"),
+                    true,
+                ),
+                ("No, leave it alone".to_string(), false),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (label, danger))| {
+                let selected = index == view.selected;
+                let style = if danger {
+                    Style::default().fg(crate::ui::theme::danger())
+                } else {
+                    text
+                };
+                Line::from(vec![
+                    Span::styled(if selected { " \u{25B8} " } else { "   " }, accent),
+                    Span::styled(
+                        label,
+                        if selected {
+                            style.add_modifier(Modifier::BOLD)
+                        } else {
+                            style
+                        },
+                    ),
+                ])
+            })
+            .collect();
+            (
+                format!(" Delete {name}? "),
+                rows,
+                "\u{2191}/\u{2193} move  \u{b7}  Enter choose  \u{b7}  Esc back".to_string(),
+            )
+        }
+        CommunityMode::Webhooks { guild_id, state } => {
+            let name = app
+                .guilds
+                .iter()
+                .find(|g| &g.id == guild_id)
+                .map(|g| g.name.clone())
+                .unwrap_or_default();
+            let rows = match state {
+                WebhooksState::Loading => vec![Line::from(Span::styled("  Loading…", muted))],
+                WebhooksState::Failed(message) => {
+                    vec![Line::from(Span::styled(format!("  {message}"), muted))]
+                }
+                WebhooksState::Ready(hooks) if hooks.is_empty() => vec![Line::from(Span::styled(
+                    "  None yet (+ makes one in the channel now open).",
+                    muted,
+                ))],
+                WebhooksState::Ready(hooks) => hooks
+                    .iter()
+                    .enumerate()
+                    .map(|(index, hook)| {
+                        let selected = index == view.selected;
+                        // where it posts, and who made it; the token is a
+                        // credential and is never drawn
+                        let channel = app
+                            .channel_by_id(&hook.channel_id)
+                            .map(|c| format!("#{}", c.name))
+                            .unwrap_or_else(|| "#?".to_string());
+                        let by = hook
+                            .user
+                            .as_ref()
+                            .map(crate::app::display_name)
+                            .unwrap_or_default();
+                        Line::from(vec![
+                            Span::styled(if selected { " \u{25B8} " } else { "   " }, accent),
+                            Span::styled(
+                                hook.name.clone(),
+                                if selected {
+                                    text.add_modifier(Modifier::BOLD)
+                                } else {
+                                    text
+                                },
+                            ),
+                            Span::styled(format!("   {channel}"), dim),
+                            Span::styled(
+                                if by.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("   made by {by}")
+                                },
+                                muted,
+                            ),
+                        ])
+                    })
+                    .collect(),
+            };
+            (
+                format!(" Webhooks in {name} "),
+                rows,
+                "\u{2191}/\u{2193} move  \u{b7}  + make one here  \u{b7}  r rename  \u{b7}  y copy its address  \u{b7}  x delete  \u{b7}  Esc back"
+                    .to_string(),
             )
         }
     };

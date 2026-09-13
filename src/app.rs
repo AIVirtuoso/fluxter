@@ -1027,6 +1027,20 @@ pub enum CommunityMode {
         guild_id: String,
         state: AuditLogState,
     },
+    /// A community's webhooks, to make, rename, copy or delete one.
+    Webhooks {
+        guild_id: String,
+        state: WebhooksState,
+    },
+    /// The second press a webhook deletion asks for: its address stops
+    /// working, which is the only way its token is ever revoked. The list
+    /// is kept so "No" goes back to it without another request.
+    ConfirmWebhookDelete {
+        guild_id: String,
+        hooks: Vec<crate::api::types::WebhookResponse>,
+        webhook_id: String,
+        name: String,
+    },
     /// What an invite leads to, looked up before it is taken, so nobody
     /// joins something they cannot see the name of.
     Preview { code: String, state: PreviewState },
@@ -1073,6 +1087,12 @@ pub enum AuditLogState {
     Ready(Box<crate::api::types::GuildAuditLogResponse>),
     Failed(String),
 }
+#[derive(Debug, Clone)]
+pub enum WebhooksState {
+    Loading,
+    Ready(Vec<crate::api::types::WebhookResponse>),
+    Failed(String),
+}
 
 #[derive(Debug, Clone)]
 pub enum CommunityInput {
@@ -1090,6 +1110,10 @@ pub enum CommunityInput {
     GuildName(String),
     /// A custom invite code, or nothing to clear it.
     VanityCode(String),
+    /// The name of a webhook to make in the channel now open.
+    NewWebhook(String),
+    /// A new name for the webhook under the cursor.
+    RenameWebhook { webhook_id: String, text: String },
 }
 
 impl CommunityInput {
@@ -1100,8 +1124,10 @@ impl CommunityInput {
             | Self::Search(t)
             | Self::NewRole(t)
             | Self::GuildName(t)
-            | Self::VanityCode(t) => t,
+            | Self::VanityCode(t)
+            | Self::NewWebhook(t) => t,
             Self::RenameRole { text, .. } => text,
+            Self::RenameWebhook { text, .. } => text,
         }
     }
 
@@ -1112,8 +1138,10 @@ impl CommunityInput {
             | Self::Search(t)
             | Self::NewRole(t)
             | Self::GuildName(t)
-            | Self::VanityCode(t) => t,
+            | Self::VanityCode(t)
+            | Self::NewWebhook(t) => t,
             Self::RenameRole { text, .. } => text,
+            Self::RenameWebhook { text, .. } => text,
         }
     }
 
@@ -1126,6 +1154,8 @@ impl CommunityInput {
             Self::RenameRole { .. } => "New name for the role",
             Self::GuildName(_) => "New name for the community",
             Self::VanityCode(_) => "Custom code (empty clears it)",
+            Self::NewWebhook(_) => "Name for the webhook",
+            Self::RenameWebhook { .. } => "New name for the webhook",
         }
     }
 }
@@ -1751,6 +1781,7 @@ pub enum CommunityAction {
     Rename,
     Vanity,
     AuditLog,
+    Webhooks,
     Leave,
 }
 
@@ -1767,6 +1798,7 @@ impl CommunityAction {
             Self::Rename => "Rename this community",
             Self::Vanity => "Custom invite address",
             Self::AuditLog => "What has been done lately",
+            Self::Webhooks => "Webhooks in this community",
             Self::Leave => "Leave this community",
         }
     }
@@ -6769,6 +6801,9 @@ impl App {
             if perms & crate::permissions::VIEW_AUDIT_LOG != 0 {
                 out.push(CommunityAction::AuditLog);
             }
+            if self.guild_permissions(&guild_id) & crate::permissions::MANAGE_WEBHOOKS != 0 {
+                out.push(CommunityAction::Webhooks);
+            }
             out.push(CommunityAction::Leave);
         }
         out
@@ -7201,6 +7236,11 @@ impl App {
                 state: AuditLogState::Ready(page),
                 ..
             }) => page.audit_log_entries.len(),
+            Some(CommunityMode::Webhooks {
+                state: WebhooksState::Ready(hooks),
+                ..
+            }) => hooks.len(),
+            Some(CommunityMode::ConfirmWebhookDelete { .. }) => 2,
             // nothing to move through while it is still coming, and the
             // preview is one thing rather than a list
             _ => 0,
@@ -8206,6 +8246,15 @@ impl App {
             view.selected = 0;
         }
     }
+    pub fn open_guild_webhooks(&mut self, guild_id: String) {
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::Webhooks {
+                guild_id,
+                state: WebhooksState::Loading,
+            };
+            view.selected = 0;
+        }
+    }
 
     pub fn set_guild_vanity(
         &mut self,
@@ -8237,6 +8286,37 @@ impl App {
             _ => None,
         }
     }
+    pub fn set_guild_webhooks(
+        &mut self,
+        for_guild: &str,
+        hooks: Vec<crate::api::types::WebhookResponse>,
+    ) {
+        if let Some(view) = &mut self.community
+            && let CommunityMode::Webhooks { guild_id, state } = &mut view.mode
+            && guild_id == for_guild
+        {
+            *state = WebhooksState::Ready(hooks);
+            view.selected = 0;
+        }
+    }
+
+    pub fn set_guild_webhooks_failed(&mut self, for_guild: &str, message: String) {
+        if let Some(view) = &mut self.community
+            && let CommunityMode::Webhooks { guild_id, state } = &mut view.mode
+            && guild_id == for_guild
+        {
+            *state = WebhooksState::Failed(message);
+        }
+    }
+
+    /// The community whose webhooks are on screen.
+    pub fn community_webhooks_guild(&self) -> Option<String> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::Webhooks { guild_id, .. } => Some(guild_id.clone()),
+            _ => None,
+        }
+    }
 
     /// The custom invite code on screen, when there is one set.
     pub fn community_vanity_code(&self) -> Option<String> {
@@ -8246,6 +8326,16 @@ impl App {
                 state: VanityState::Ready(vanity),
                 ..
             } => vanity.code.clone().filter(|c| !c.is_empty()),
+            _ => None,
+        }
+    }
+    pub fn community_selected_webhook(&self) -> Option<crate::api::types::WebhookResponse> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::Webhooks {
+                state: WebhooksState::Ready(hooks),
+                ..
+            } => hooks.get(view.selected).cloned(),
             _ => None,
         }
     }
@@ -8288,6 +8378,35 @@ impl App {
         }
         true
     }
+    /// x on a webhook: ask, with the cursor on "No", since deleting it is
+    /// the one way its address is ever revoked. False when there is no
+    /// webhook under the cursor.
+    pub fn ask_webhook_delete(&mut self) -> bool {
+        let Some(view) = self.community.as_ref() else {
+            return false;
+        };
+        let CommunityMode::Webhooks {
+            guild_id,
+            state: WebhooksState::Ready(hooks),
+        } = &view.mode
+        else {
+            return false;
+        };
+        let Some(hook) = hooks.get(view.selected) else {
+            return false;
+        };
+        let mode = CommunityMode::ConfirmWebhookDelete {
+            guild_id: guild_id.clone(),
+            hooks: hooks.clone(),
+            webhook_id: hook.id.clone(),
+            name: hook.name.clone(),
+        };
+        if let Some(view) = &mut self.community {
+            view.mode = mode;
+            view.selected = 1;
+        }
+        true
+    }
 
     /// The deletion being asked about, and whether the cursor is on "Yes":
     /// (community, role, name, yes).
@@ -8301,6 +8420,24 @@ impl App {
             } => Some((
                 guild_id.clone(),
                 role_id.clone(),
+                name.clone(),
+                view.selected == 0,
+            )),
+            _ => None,
+        }
+    }
+    /// (community, webhook, name, yes).
+    pub fn community_webhook_delete_choice(&self) -> Option<(String, String, String, bool)> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::ConfirmWebhookDelete {
+                guild_id,
+                webhook_id,
+                name,
+                ..
+            } => Some((
+                guild_id.clone(),
+                webhook_id.clone(),
                 name.clone(),
                 view.selected == 0,
             )),
@@ -8349,6 +8486,18 @@ impl App {
         }
     }
 
+    /// The address something posts through: the API's own webhook path
+    /// with the id and the token in it. It is a credential, so it is
+    /// copied and never drawn.
+    pub fn webhook_url(&self, webhook_id: &str, token: &str) -> String {
+        let base = self.discovery.endpoints.api.trim_end_matches('/');
+        if base.is_empty() {
+            format!("/webhooks/{webhook_id}/{token}")
+        } else {
+            format!("{base}/webhooks/{webhook_id}/{token}")
+        }
+    }
+
     /// Step back out of a list the menu led to, or close it.
     pub fn community_back(&mut self) {
         let Some(view) = &mut self.community else {
@@ -8362,6 +8511,18 @@ impl App {
         if let CommunityMode::ConfirmRoleDelete { guild_id, .. } = &view.mode {
             view.mode = CommunityMode::Roles {
                 guild_id: guild_id.clone(),
+            };
+            view.selected = 0;
+            return;
+        }
+        // out of the deletion question, back onto the list it came from
+        if let CommunityMode::ConfirmWebhookDelete {
+            guild_id, hooks, ..
+        } = &view.mode
+        {
+            view.mode = CommunityMode::Webhooks {
+                guild_id: guild_id.clone(),
+                state: WebhooksState::Ready(hooks.clone()),
             };
             view.selected = 0;
             return;
@@ -12928,5 +13089,141 @@ mod guild_settings_tests {
         let stamp = crate::api::types::snowflake_timestamp("1501314428688998184").unwrap();
         assert!(stamp.starts_with("2026-"), "{stamp}");
         assert!(crate::api::types::snowflake_timestamp("not a snowflake").is_none());
+    }
+}
+
+/// A community's webhooks: who is offered the list, and the one thing that
+/// must never reach the screen.
+#[cfg(test)]
+mod webhook_tests {
+    use super::*;
+    use crate::api::types::{
+        GuildResponse, UserPartialResponse, UserPrivateResponse, WebhookResponse,
+        WellKnownEndpoints, WellKnownFluxerResponse,
+    };
+
+    fn app_with(permissions: u64) -> App {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: "olive".into(),
+            permissions: Some(permissions.to_string()),
+            ..Default::default()
+        };
+        App::new(
+            WellKnownFluxerResponse {
+                endpoints: WellKnownEndpoints {
+                    api: "https://api.example.invalid/v1".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            None,
+            UiSettings::default(),
+        )
+    }
+
+    fn hook() -> WebhookResponse {
+        WebhookResponse {
+            id: "w1".into(),
+            guild_id: "g".into(),
+            channel_id: "c".into(),
+            name: "deploys".into(),
+            token: "s3cret".into(),
+            user: Some(UserPartialResponse {
+                id: "olive".into(),
+                username: "olive".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_row_needs_manage_webhooks() {
+        let app = app_with(crate::permissions::VIEW_CHANNEL);
+        assert!(!app.community_actions().contains(&CommunityAction::Webhooks));
+        let app = app_with(crate::permissions::MANAGE_WEBHOOKS);
+        assert!(app.community_actions().contains(&CommunityAction::Webhooks));
+    }
+
+    #[test]
+    fn the_list_walks_and_the_address_carries_the_token() {
+        let mut app = app_with(crate::permissions::MANAGE_WEBHOOKS);
+        app.open_communities();
+        app.open_guild_webhooks("g".into());
+        assert_eq!(app.community_len(), 0);
+        app.set_guild_webhooks("g", vec![hook()]);
+        assert_eq!(app.community_len(), 1);
+        assert_eq!(app.community_webhooks_guild().as_deref(), Some("g"));
+        let selected = app.community_selected_webhook().unwrap();
+        assert_eq!(
+            app.webhook_url(&selected.id, &selected.token),
+            "https://api.example.invalid/v1/webhooks/w1/s3cret"
+        );
+    }
+
+    /// x asks with the cursor on "No", and "No" goes back to the list as
+    /// it was, without asking the server for it again.
+    #[test]
+    fn deleting_a_webhook_asks_first_and_no_keeps_the_list() {
+        let mut app = app_with(crate::permissions::MANAGE_WEBHOOKS);
+        app.open_communities();
+        app.open_guild_webhooks("g".into());
+        assert!(!app.ask_webhook_delete());
+        app.set_guild_webhooks("g", vec![hook()]);
+        assert!(app.ask_webhook_delete());
+        assert_eq!(app.community_len(), 2);
+        assert_eq!(
+            app.community_webhook_delete_choice()
+                .map(|(_, id, _, yes)| (id, yes)),
+            Some(("w1".to_string(), false))
+        );
+        app.community_move(-1);
+        assert!(
+            app.community_webhook_delete_choice()
+                .is_some_and(|(_, _, _, yes)| yes)
+        );
+        app.community_back();
+        assert_eq!(app.community_len(), 1);
+        assert_eq!(
+            app.community_selected_webhook().map(|h| h.id),
+            Some("w1".into())
+        );
+    }
+
+    /// The token is a bearer credential for the webhook's whole life, so
+    /// nothing that draws a row may carry it.
+    #[test]
+    fn no_row_of_the_list_contains_the_token() {
+        let mut app = app_with(crate::permissions::MANAGE_WEBHOOKS);
+        app.open_communities();
+        app.open_guild_webhooks("g".into());
+        app.set_guild_webhooks("g", vec![hook()]);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+        terminal
+            .draw(|f| crate::ui::community_overlay::render(f, f.area(), &app))
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let screen: String = (0..20)
+            .map(|y| {
+                (0..100)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(screen.contains("deploys"), "{screen}");
+        assert!(!screen.contains("s3cret"), "{screen}");
     }
 }
