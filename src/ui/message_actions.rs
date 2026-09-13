@@ -47,6 +47,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 .collect(),
             "↑/↓ move  ·  Enter send the report  ·  Esc back",
         ),
+        MessageActionsMode::UserReportCategories => (
+            " Report this account as ",
+            crate::app::USER_REPORT_CATEGORIES
+                .iter()
+                .map(|(_, label)| ((*label).to_string(), String::new(), false))
+                .collect(),
+            "↑/↓ move  ·  Enter send the report  ·  Esc back",
+        ),
         MessageActionsMode::Confirm(action) => (
             " Are you sure? ",
             vec![
@@ -232,7 +240,8 @@ mod tests {
         assert!(s.contains("Copy a link to it"), "{s}");
         assert!(s.contains("Bookmark"), "{s}");
         // somebody else's message can be reported, and cannot be edited
-        assert!(s.contains("Report to the moderators"), "{s}");
+        assert!(s.contains("Report this message to the moderators"), "{s}");
+        assert!(s.contains("Report the account to the moderators"), "{s}");
         assert!(!s.contains("Edit"), "{s}");
         let marked: Vec<&str> = s.lines().filter(|l| l.contains("▸")).collect();
         assert_eq!(marked.len(), 1, "{s}");

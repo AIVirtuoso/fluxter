@@ -3725,6 +3725,27 @@ fn run_community_action(
         spawn_join_discoverable(client.clone(), event_tx.clone(), guild.id);
         return;
     }
+    // the category list is a list rather than a row of the menu
+    if let Some((guild_id, category)) = app.community_report_choice() {
+        let name = app
+            .guilds
+            .iter()
+            .find(|g| g.id == guild_id)
+            .map(|g| g.name.clone())
+            .unwrap_or_default();
+        app.dismiss_communities();
+        app.set_status(format!("Reported {name} to the moderators."));
+        let client = client.clone();
+        let event_tx = event_tx.clone();
+        tokio::spawn(async move {
+            if let Err(err) = client.report_guild(&guild_id, &category).await {
+                let _ = event_tx.send(AppEvent::ApiError(format!(
+                    "Failed to send the report: {err}"
+                )));
+            }
+        });
+        return;
+    }
     let Some(action) = app.community_selected_action() else {
         return;
     };
@@ -3757,6 +3778,12 @@ fn run_community_action(
             };
             app.open_guild_invites(guild_id.clone());
             spawn_guild_invites(client.clone(), event_tx.clone(), guild_id);
+        }
+        crate::app::CommunityAction::Report => {
+            let Some(guild_id) = app.active_guild_id() else {
+                return;
+            };
+            app.open_guild_report(guild_id);
         }
         crate::app::CommunityAction::Leave => {
             let Some(guild_id) = app.active_guild_id() else {
@@ -4678,6 +4705,29 @@ fn run_message_action(
                             "Failed to delete the messages: {err}"
                         )));
                     }
+                }
+            });
+        }
+        MessageAction::ReportUser => {
+            let Some(category) = argument else {
+                return;
+            };
+            let Some(msg) = app.message_by_id(&channel_id, &message_id) else {
+                return;
+            };
+            let guild_id = app.guild_id_for_active_channel();
+            let user_id = msg.author.id.clone();
+            app.set_status("Report sent to the moderators.");
+            let client = client.clone();
+            let event_tx = event_tx.clone();
+            tokio::spawn(async move {
+                if let Err(err) = client
+                    .report_user(&user_id, &category, guild_id.as_deref())
+                    .await
+                {
+                    let _ = event_tx.send(AppEvent::ApiError(format!(
+                        "Failed to send the report: {err}"
+                    )));
                 }
             });
         }

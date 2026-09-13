@@ -279,6 +279,38 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     .to_string(),
             )
         }
+        CommunityMode::ReportCategories { guild_id } => {
+            let name = app
+                .guilds
+                .iter()
+                .find(|g| &g.id == guild_id)
+                .map(|g| g.name.clone())
+                .unwrap_or_default();
+            let rows = crate::app::GUILD_REPORT_CATEGORIES
+                .iter()
+                .enumerate()
+                .map(|(index, (_, label))| {
+                    let selected = index == view.selected;
+                    Line::from(vec![
+                        Span::styled(if selected { " \u{25B8} " } else { "   " }, accent),
+                        Span::styled(
+                            (*label).to_string(),
+                            if selected {
+                                text.add_modifier(Modifier::BOLD)
+                            } else {
+                                text
+                            },
+                        ),
+                    ])
+                })
+                .collect();
+            (
+                format!(" Report {name} as "),
+                rows,
+                "\u{2191}/\u{2193} move  \u{b7}  Enter send the report  \u{b7}  Esc back"
+                    .to_string(),
+            )
+        }
     };
 
     let block = Block::default()

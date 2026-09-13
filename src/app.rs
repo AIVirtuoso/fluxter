@@ -1005,6 +1005,8 @@ pub enum CommunityMode {
         guild_id: String,
         state: InvitesState,
     },
+    /// Which category a report about the community goes under.
+    ReportCategories { guild_id: String },
     /// What an invite leads to, looked up before it is taken, so nobody
     /// joins something they cannot see the name of.
     Preview { code: String, state: PreviewState },
@@ -1141,6 +1143,8 @@ pub enum MessageAction {
     Delete,
     DeleteMarked,
     Report,
+    /// A report about the author's account rather than about the message.
+    ReportUser,
 }
 
 impl MessageAction {
@@ -1169,7 +1173,8 @@ impl MessageAction {
             Self::RemoveAttachment => "Remove a file from it",
             Self::Delete => "Delete",
             Self::DeleteMarked => "Delete the marked messages",
-            Self::Report => "Report to the moderators",
+            Self::Report => "Report this message to the moderators",
+            Self::ReportUser => "Report the account to the moderators",
         }
     }
 
@@ -1208,6 +1213,9 @@ pub enum MessageActionsMode {
     /// Which file to take off the message: (attachment id, filename).
     Attachments(Vec<(String, String)>),
     ReportCategories,
+    /// The categories a report about the account takes, which are not the
+    /// ones a message report takes.
+    UserReportCategories,
     /// A destructive action waiting for a second press.
     Confirm(MessageAction),
 }
@@ -1254,6 +1262,31 @@ pub enum SessionsState {
 
 /// The categories `POST /reports/message` takes, with the wording the web
 /// client puts on them.
+/// The categories `POST /reports/user` takes: a report about an account
+/// rather than about one message.
+pub const USER_REPORT_CATEGORIES: [(&str, &str); 7] = [
+    ("harassment", "Harassment or bullying"),
+    ("hate_speech", "Hate speech"),
+    ("spam_account", "An account used for spam"),
+    ("impersonation", "Pretending to be somebody else"),
+    ("underage_user", "Too young to be here"),
+    ("inappropriate_profile", "Their profile itself"),
+    ("other", "Something else"),
+];
+
+/// The categories `POST /reports/guild` takes.
+pub const GUILD_REPORT_CATEGORIES: [(&str, &str); 9] = [
+    ("harassment", "It is used for harassment"),
+    ("hate_speech", "It promotes hatred"),
+    ("extremist_community", "It promotes extremism or terrorism"),
+    ("illegal_activity", "It is used for illegal activity"),
+    ("child_safety", "It endangers minors"),
+    ("raid_coordination", "It coordinates attacks on others"),
+    ("spam", "It is used for spam"),
+    ("malware_distribution", "It distributes malware"),
+    ("other", "Something else"),
+];
+
 pub const REPORT_CATEGORIES: [(&str, &str); 12] = [
     ("harassment", "Harassment or bullying"),
     ("hate_speech", "Hate speech"),
@@ -1408,6 +1441,7 @@ pub enum CommunityAction {
     Create,
     Discover,
     Invites,
+    Report,
     Leave,
 }
 
@@ -1418,6 +1452,7 @@ impl CommunityAction {
             Self::Create => "Make a community",
             Self::Discover => "Browse the directory",
             Self::Invites => "Invites to this community",
+            Self::Report => "Report this community",
             Self::Leave => "Leave this community",
         }
     }
@@ -6215,6 +6250,7 @@ impl App {
         }
         if !mine {
             out.push(MessageAction::Report);
+            out.push(MessageAction::ReportUser);
         }
         out
     }
@@ -6227,8 +6263,17 @@ impl App {
             CommunityAction::Create,
             CommunityAction::Discover,
         ];
-        if self.active_guild_id().is_some() {
+        if let Some(guild_id) = self.active_guild_id() {
             out.push(CommunityAction::Invites);
+            // the server refuses an owner reporting their own community,
+            // so the row is not offered there
+            let owns = self
+                .guilds
+                .iter()
+                .any(|g| g.id == guild_id && g.owner_id == self.me.id);
+            if !owns {
+                out.push(CommunityAction::Report);
+            }
             out.push(CommunityAction::Leave);
         }
         out
@@ -6306,6 +6351,7 @@ impl App {
                 MessageActionsMode::Actions => view.actions.len(),
                 MessageActionsMode::Attachments(items) => items.len(),
                 MessageActionsMode::ReportCategories => REPORT_CATEGORIES.len(),
+                MessageActionsMode::UserReportCategories => USER_REPORT_CATEGORIES.len(),
                 MessageActionsMode::Confirm(_) => 2,
             },
         }
@@ -6333,6 +6379,7 @@ impl App {
                 state: InvitesState::Ready(invites),
                 ..
             }) => invites.len(),
+            Some(CommunityMode::ReportCategories { .. }) => GUILD_REPORT_CATEGORIES.len(),
             // nothing to move through while it is still coming, and the
             // preview is one thing rather than a list
             _ => 0,
@@ -6536,6 +6583,16 @@ impl App {
                     None
                 }
             }
+            MessageActionsMode::UserReportCategories => {
+                let category = USER_REPORT_CATEGORIES.get(view.selected)?.0.to_string();
+                self.message_actions = None;
+                Some(MessageActionOutcome::Run {
+                    action: MessageAction::ReportUser,
+                    channel_id,
+                    message_id,
+                    argument: Some(category),
+                })
+            }
             MessageActionsMode::ReportCategories => {
                 let category = REPORT_CATEGORIES.get(view.selected)?.0.to_string();
                 self.message_actions = None;
@@ -6568,6 +6625,13 @@ impl App {
                 if action == MessageAction::Report {
                     if let Some(view) = &mut self.message_actions {
                         view.mode = MessageActionsMode::ReportCategories;
+                        view.selected = 0;
+                    }
+                    return None;
+                }
+                if action == MessageAction::ReportUser {
+                    if let Some(view) = &mut self.message_actions {
+                        view.mode = MessageActionsMode::UserReportCategories;
                         view.selected = 0;
                     }
                     return None;
@@ -7225,6 +7289,26 @@ impl App {
                 state: InvitesState::Ready(invites),
                 ..
             } => invites.get(view.selected).cloned(),
+            _ => None,
+        }
+    }
+
+    pub fn open_guild_report(&mut self, guild_id: String) {
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::ReportCategories { guild_id };
+            view.selected = 0;
+        }
+    }
+
+    /// The community a report is being filed about, and the category the
+    /// cursor is on.
+    pub fn community_report_choice(&self) -> Option<(String, String)> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::ReportCategories { guild_id } => Some((
+                guild_id.clone(),
+                GUILD_REPORT_CATEGORIES.get(view.selected)?.0.to_string(),
+            )),
             _ => None,
         }
     }
@@ -11032,5 +11116,138 @@ mod sticker_tests {
         app.set_guild_stickers("guild-1", vec![guild_sticker("1", "one", &[])]);
         app.remove_guild("guild-1");
         assert!(!app.guild_stickers.contains_key("guild-1"));
+    }
+}
+
+/// Reporting an account and reporting a community: both go to the
+/// instance's moderators, and each has its own set of categories.
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+    use crate::api::types::{
+        CHANNEL_GUILD_TEXT, ChannelResponse, GuildResponse, MessageResponse, UserPartialResponse,
+        UserPrivateResponse, WellKnownFluxerResponse,
+    };
+
+    fn app_in_guild(owner: &str) -> App {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: owner.into(),
+            permissions: Some(crate::permissions::VIEW_CHANNEL.to_string()),
+            ..Default::default()
+        };
+        let channel = ChannelResponse {
+            id: "c".into(),
+            kind: CHANNEL_GUILD_TEXT,
+            name: "general".into(),
+            guild_id: Some("g".into()),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            WellKnownFluxerResponse::default(),
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            Some("c".into()),
+            UiSettings::default(),
+        );
+        app.set_guild_channels("g", vec![channel]);
+        app
+    }
+
+    fn message(author: &str) -> MessageResponse {
+        MessageResponse {
+            id: "1".into(),
+            channel_id: "c".into(),
+            author: UserPartialResponse {
+                id: author.into(),
+                username: author.into(),
+                ..Default::default()
+            },
+            content: "hello".into(),
+            timestamp: "2026-09-13T10:00:00.000Z".into(),
+            ..Default::default()
+        }
+    }
+
+    /// Reporting the account is offered beside reporting the message, and
+    /// neither on the reader's own.
+    #[test]
+    fn both_reports_are_offered_on_somebody_elses_message() {
+        let app = app_in_guild("olive");
+        let rows = app.message_actions_for(&message("bob"));
+        assert!(rows.contains(&MessageAction::Report));
+        assert!(rows.contains(&MessageAction::ReportUser));
+        let rows = app.message_actions_for(&message("me"));
+        assert!(!rows.contains(&MessageAction::Report));
+        assert!(!rows.contains(&MessageAction::ReportUser));
+    }
+
+    #[test]
+    fn the_account_report_asks_its_own_categories_and_hands_one_back() {
+        let mut app = app_in_guild("olive");
+        app.upsert_message(message("bob"));
+        app.selected_message_index = Some(0);
+        assert!(app.open_message_actions());
+        let index = app
+            .message_actions
+            .as_ref()
+            .unwrap()
+            .actions
+            .iter()
+            .position(|a| *a == MessageAction::ReportUser)
+            .unwrap();
+        if let Some(view) = app.message_actions.as_mut() {
+            view.selected = index;
+        }
+        assert!(app.message_actions_confirm().is_none());
+        assert_eq!(
+            app.message_actions.as_ref().map(|v| v.mode.clone()),
+            Some(MessageActionsMode::UserReportCategories)
+        );
+        assert_eq!(app.message_actions_len(), USER_REPORT_CATEGORIES.len());
+        // the third row is the spam-account category, which the message
+        // report does not have
+        if let Some(view) = app.message_actions.as_mut() {
+            view.selected = 2;
+        }
+        let Some(MessageActionOutcome::Run {
+            action, argument, ..
+        }) = app.message_actions_confirm()
+        else {
+            panic!("choosing a category should send the report");
+        };
+        assert_eq!(action, MessageAction::ReportUser);
+        assert_eq!(argument.as_deref(), Some("spam_account"));
+    }
+
+    /// The server refuses an owner reporting their own community, so the
+    /// row is not there for one.
+    #[test]
+    fn a_community_is_reportable_unless_you_own_it() {
+        let app = app_in_guild("olive");
+        assert!(app.community_actions().contains(&CommunityAction::Report));
+        let app = app_in_guild("me");
+        assert!(!app.community_actions().contains(&CommunityAction::Report));
+    }
+
+    #[test]
+    fn the_community_report_hands_back_the_community_and_the_category() {
+        let mut app = app_in_guild("olive");
+        app.open_communities();
+        app.open_guild_report("g".into());
+        assert_eq!(app.community_len(), GUILD_REPORT_CATEGORIES.len());
+        app.community_move(4);
+        assert_eq!(
+            app.community_report_choice(),
+            Some(("g".to_string(), "child_safety".to_string()))
+        );
     }
 }
