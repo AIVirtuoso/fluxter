@@ -2,7 +2,7 @@
 //! community's own invites. One overlay in three modes, since each of
 //! them is a list and a cursor.
 
-use crate::app::{App, CommunityMode, DiscoverState, InvitesState};
+use crate::app::{App, CommunityMode, DiscoverState, InvitesState, WebhooksState};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -276,6 +276,68 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 format!(" Invites to {name} "),
                 rows,
                 "\u{2191}/\u{2193} move  ·  y copy the link  ·  + make one  ·  x revoke  ·  Esc back"
+                    .to_string(),
+            )
+        }
+        CommunityMode::Webhooks { guild_id, state } => {
+            let name = app
+                .guilds
+                .iter()
+                .find(|g| &g.id == guild_id)
+                .map(|g| g.name.clone())
+                .unwrap_or_default();
+            let rows = match state {
+                WebhooksState::Loading => vec![Line::from(Span::styled("  Loading…", muted))],
+                WebhooksState::Failed(message) => {
+                    vec![Line::from(Span::styled(format!("  {message}"), muted))]
+                }
+                WebhooksState::Ready(hooks) if hooks.is_empty() => vec![Line::from(Span::styled(
+                    "  None yet (+ makes one in the channel now open).",
+                    muted,
+                ))],
+                WebhooksState::Ready(hooks) => hooks
+                    .iter()
+                    .enumerate()
+                    .map(|(index, hook)| {
+                        let selected = index == view.selected;
+                        // where it posts, and who made it; the token is a
+                        // credential and is never drawn
+                        let channel = app
+                            .channel_by_id(&hook.channel_id)
+                            .map(|c| format!("#{}", c.name))
+                            .unwrap_or_else(|| "#?".to_string());
+                        let by = hook
+                            .user
+                            .as_ref()
+                            .map(crate::app::display_name)
+                            .unwrap_or_default();
+                        Line::from(vec![
+                            Span::styled(if selected { " \u{25B8} " } else { "   " }, accent),
+                            Span::styled(
+                                hook.name.clone(),
+                                if selected {
+                                    text.add_modifier(Modifier::BOLD)
+                                } else {
+                                    text
+                                },
+                            ),
+                            Span::styled(format!("   {channel}"), dim),
+                            Span::styled(
+                                if by.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("   made by {by}")
+                                },
+                                muted,
+                            ),
+                        ])
+                    })
+                    .collect(),
+            };
+            (
+                format!(" Webhooks in {name} "),
+                rows,
+                "\u{2191}/\u{2193} move  \u{b7}  + make one here  \u{b7}  r rename  \u{b7}  y copy its address  \u{b7}  x delete  \u{b7}  Esc back"
                     .to_string(),
             )
         }

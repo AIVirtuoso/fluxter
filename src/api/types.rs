@@ -1566,6 +1566,28 @@ impl RelationshipResponse {
 /// the message when it is set, which is what "suppress embeds" does.
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
 
+/// One webhook: a name and picture something posts into one channel
+/// under, with the token that authorises it. The token is a bearer
+/// credential for the webhook's whole life and is never rotated, so it is
+/// copied and never drawn.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WebhookResponse {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub guild_id: String,
+    #[serde(default)]
+    pub channel_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub token: String,
+    #[serde(default)]
+    pub user: Option<UserPartialResponse>,
+}
+
 /// One entry of `GET /channels/{id}/messages/pins`: the message and when
 /// it was pinned (which is not the message's own timestamp).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

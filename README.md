@@ -998,6 +998,7 @@ first three are always there, the last two only inside a community.
 | **Make a community** | Asks for a name and makes it. You are its owner. |
 | **Browse the directory** | The instance's discovery listing. **/** searches it, **Enter** joins straight from the list without an invite. |
 | **Invites to this community** | Every invite you may see. **y** copies its link, **+** makes one to the channel now open, **x** revokes. |
+| **Webhooks in this community** | Every webhook and the channel it posts into. **+** makes one in the channel now open, **r** renames, **y** copies its address, **x** deletes. Needs **Manage Webhooks**. |
 | **Leave this community** | Leaves it. A community you own cannot be left, and the client says so rather than sending a call the server would refuse. |
 
 ### An invite is looked up before it is taken
@@ -1012,6 +1013,17 @@ not seen.
 An invite made with **+** is a day long with no limit on uses, which is
 what the server itself defaults to, and its link goes on the clipboard as
 soon as it exists.
+
+### A webhook's address is a secret
+
+**y** copies it; nothing shows it. A webhook's token is minted once and
+never rotated, so the address -- `.../webhooks/<id>/<token>` -- is a bearer
+credential: anything holding it can post into that channel as that webhook,
+with no account and no permission check. It is not drawn on the screen, and
+it never reaches the debug log either. A test asserts that no row of the
+list contains it.
+
+Deleting a webhook is the only way to revoke one.
 
 ## Message formatting
 
@@ -1246,7 +1258,7 @@ close. The profile of a selected message's author is on **u** now.
 | **Alt+N**               | **Start a conversation** with somebody, or a group with several (see "Conversations").                                                                                                                                                                  |
 | **Alt+G**               | Look after the **group** now open: rename it, add somebody, take somebody out, leave it.                                                                                                                                                                |
 
-| **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites, or leave it (see "Communities and invites").                                                                                                        |
+| **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites or its webhooks, or leave it (see "Communities and invites").                                                                                                        |
 
 | **Alt+V**               | **Voice**: join the open voice channel, ring a conversation, answer or turn down a call, mute, deafen, leave (see "Voice").                                                                                                                             |
 | **F1**                  | **Keybindings** overlay - **↑** / **↓** / **PgUp** / **PgDn** scroll when it does not fit (**Esc** / **Enter** / **q** to close).                                                                                                                        |

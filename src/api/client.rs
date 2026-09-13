@@ -1051,6 +1051,66 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// Every webhook of a community, whichever channel each posts into.
+    /// Needs MANAGE_WEBHOOKS.
+    pub async fn guild_webhooks(
+        &self,
+        guild_id: &str,
+    ) -> Result<Vec<crate::api::types::WebhookResponse>> {
+        self.send_json::<(), (), Vec<crate::api::types::WebhookResponse>>(
+            Method::GET,
+            &format!("/guilds/{guild_id}/webhooks"),
+            None::<&()>,
+            None,
+            false,
+        )
+        .await
+    }
+
+    /// Make a webhook that posts into one channel.
+    pub async fn create_webhook(
+        &self,
+        channel_id: &str,
+        name: &str,
+    ) -> Result<crate::api::types::WebhookResponse> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            name: &'a str,
+        }
+        self.send_json(
+            Method::POST,
+            &format!("/channels/{channel_id}/webhooks"),
+            None::<&()>,
+            Some(&Body { name }),
+            false,
+        )
+        .await
+    }
+
+    pub async fn rename_webhook(&self, webhook_id: &str, name: &str) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            name: &'a str,
+        }
+        self.send_empty(
+            Method::PATCH,
+            &format!("/webhooks/{webhook_id}"),
+            Some(&Body { name }),
+            "rename the webhook",
+        )
+        .await
+    }
+
+    pub async fn delete_webhook(&self, webhook_id: &str) -> Result<()> {
+        self.send_empty::<()>(
+            Method::DELETE,
+            &format!("/webhooks/{webhook_id}"),
+            None,
+            "delete the webhook",
+        )
+        .await
+    }
+
     /// Leave a community. The reader cannot leave one they own; the
     /// server says so.
     pub async fn leave_guild(&self, guild_id: &str) -> Result<()> {

@@ -7,6 +7,8 @@ pub const SEND_MESSAGES: u64 = 0x800;
 pub const SEND_TTS_MESSAGES: u64 = 0x1000;
 pub const MANAGE_MESSAGES: u64 = 0x2000;
 pub const CHANGE_NICKNAME: u64 = 0x4000000;
+/// Making, changing and deleting a webhook on a channel.
+pub const MANAGE_WEBHOOKS: u64 = 1 << 29;
 
 /// Kept in sync with the API
 #[allow(dead_code)]

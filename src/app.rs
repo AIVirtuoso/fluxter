@@ -1005,6 +1005,11 @@ pub enum CommunityMode {
         guild_id: String,
         state: InvitesState,
     },
+    /// A community's webhooks, to make, rename, copy or delete one.
+    Webhooks {
+        guild_id: String,
+        state: WebhooksState,
+    },
     /// What an invite leads to, looked up before it is taken, so nobody
     /// joins something they cannot see the name of.
     Preview { code: String, state: PreviewState },
@@ -1033,6 +1038,13 @@ pub enum InvitesState {
 }
 
 #[derive(Debug, Clone)]
+pub enum WebhooksState {
+    Loading,
+    Ready(Vec<crate::api::types::WebhookResponse>),
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
 pub enum CommunityInput {
     /// An invite code or link the reader is pasting or typing.
     JoinCode(String),
@@ -1040,18 +1052,24 @@ pub enum CommunityInput {
     NewName(String),
     /// What to search the directory for.
     Search(String),
+    /// The name of a webhook to make in the channel now open.
+    NewWebhook(String),
+    /// A new name for the webhook under the cursor.
+    RenameWebhook { webhook_id: String, text: String },
 }
 
 impl CommunityInput {
     pub fn text(&self) -> &str {
         match self {
-            Self::JoinCode(t) | Self::NewName(t) | Self::Search(t) => t,
+            Self::JoinCode(t) | Self::NewName(t) | Self::Search(t) | Self::NewWebhook(t) => t,
+            Self::RenameWebhook { text, .. } => text,
         }
     }
 
     pub fn text_mut(&mut self) -> &mut String {
         match self {
-            Self::JoinCode(t) | Self::NewName(t) | Self::Search(t) => t,
+            Self::JoinCode(t) | Self::NewName(t) | Self::Search(t) | Self::NewWebhook(t) => t,
+            Self::RenameWebhook { text, .. } => text,
         }
     }
 
@@ -1060,6 +1078,8 @@ impl CommunityInput {
             Self::JoinCode(_) => "Invite code or link",
             Self::NewName(_) => "Name it",
             Self::Search(_) => "Look for",
+            Self::NewWebhook(_) => "Name for the webhook",
+            Self::RenameWebhook { .. } => "New name for the webhook",
         }
     }
 }
@@ -1392,6 +1412,7 @@ pub enum CommunityAction {
     Create,
     Discover,
     Invites,
+    Webhooks,
     Leave,
 }
 
@@ -1402,6 +1423,7 @@ impl CommunityAction {
             Self::Create => "Make a community",
             Self::Discover => "Browse the directory",
             Self::Invites => "Invites to this community",
+            Self::Webhooks => "Webhooks in this community",
             Self::Leave => "Leave this community",
         }
     }
@@ -6108,11 +6130,35 @@ impl App {
             CommunityAction::Create,
             CommunityAction::Discover,
         ];
-        if self.active_guild_id().is_some() {
+        if let Some(guild_id) = self.active_guild_id() {
             out.push(CommunityAction::Invites);
+            if self.guild_permissions(&guild_id) & crate::permissions::MANAGE_WEBHOOKS != 0 {
+                out.push(CommunityAction::Webhooks);
+            }
             out.push(CommunityAction::Leave);
         }
         out
+    }
+
+    /// The reader's permissions in a community, before any channel's
+    /// overwrites: what a guild-level check reads.
+    pub fn guild_permissions(&self, guild_id: &str) -> u64 {
+        let Some(guild) = self.guilds.iter().find(|g| g.id == guild_id) else {
+            return 0;
+        };
+        if guild.owner_id == self.me.id {
+            return u64::MAX;
+        }
+        let base = guild
+            .permissions
+            .as_deref()
+            .and_then(|p| p.parse::<u64>().ok())
+            .unwrap_or(0);
+        if base & crate::permissions::ADMINISTRATOR != 0 {
+            u64::MAX
+        } else {
+            base
+        }
     }
 
     pub fn open_message_actions(&mut self) -> bool {
@@ -6169,6 +6215,10 @@ impl App {
                 state: InvitesState::Ready(invites),
                 ..
             }) => invites.len(),
+            Some(CommunityMode::Webhooks {
+                state: WebhooksState::Ready(hooks),
+                ..
+            }) => hooks.len(),
             // nothing to move through while it is still coming, and the
             // preview is one thing rather than a list
             _ => 0,
@@ -7061,6 +7111,71 @@ impl App {
                 ..
             } => invites.get(view.selected).cloned(),
             _ => None,
+        }
+    }
+
+    pub fn open_guild_webhooks(&mut self, guild_id: String) {
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::Webhooks {
+                guild_id,
+                state: WebhooksState::Loading,
+            };
+            view.selected = 0;
+        }
+    }
+
+    pub fn set_guild_webhooks(
+        &mut self,
+        for_guild: &str,
+        hooks: Vec<crate::api::types::WebhookResponse>,
+    ) {
+        if let Some(view) = &mut self.community
+            && let CommunityMode::Webhooks { guild_id, state } = &mut view.mode
+            && guild_id == for_guild
+        {
+            *state = WebhooksState::Ready(hooks);
+            view.selected = 0;
+        }
+    }
+
+    pub fn set_guild_webhooks_failed(&mut self, for_guild: &str, message: String) {
+        if let Some(view) = &mut self.community
+            && let CommunityMode::Webhooks { guild_id, state } = &mut view.mode
+            && guild_id == for_guild
+        {
+            *state = WebhooksState::Failed(message);
+        }
+    }
+
+    /// The community whose webhooks are on screen.
+    pub fn community_webhooks_guild(&self) -> Option<String> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::Webhooks { guild_id, .. } => Some(guild_id.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn community_selected_webhook(&self) -> Option<crate::api::types::WebhookResponse> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::Webhooks {
+                state: WebhooksState::Ready(hooks),
+                ..
+            } => hooks.get(view.selected).cloned(),
+            _ => None,
+        }
+    }
+
+    /// The address something posts through: the API's own webhook path
+    /// with the id and the token in it. It is a credential, so it is
+    /// copied and never drawn.
+    pub fn webhook_url(&self, webhook_id: &str, token: &str) -> String {
+        let base = self.discovery.endpoints.api.trim_end_matches('/');
+        if base.is_empty() {
+            format!("/webhooks/{webhook_id}/{token}")
+        } else {
+            format!("{base}/webhooks/{webhook_id}/{token}")
         }
     }
 
@@ -10867,5 +10982,112 @@ mod sticker_tests {
         app.set_guild_stickers("guild-1", vec![guild_sticker("1", "one", &[])]);
         app.remove_guild("guild-1");
         assert!(!app.guild_stickers.contains_key("guild-1"));
+    }
+}
+
+/// A community's webhooks: who is offered the list, and the one thing that
+/// must never reach the screen.
+#[cfg(test)]
+mod webhook_tests {
+    use super::*;
+    use crate::api::types::{
+        GuildResponse, UserPartialResponse, UserPrivateResponse, WebhookResponse,
+        WellKnownEndpoints, WellKnownFluxerResponse,
+    };
+
+    fn app_with(permissions: u64) -> App {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: "olive".into(),
+            permissions: Some(permissions.to_string()),
+            ..Default::default()
+        };
+        App::new(
+            WellKnownFluxerResponse {
+                endpoints: WellKnownEndpoints {
+                    api: "https://api.example.invalid/v1".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            None,
+            UiSettings::default(),
+        )
+    }
+
+    fn hook() -> WebhookResponse {
+        WebhookResponse {
+            id: "w1".into(),
+            guild_id: "g".into(),
+            channel_id: "c".into(),
+            name: "deploys".into(),
+            token: "s3cret".into(),
+            user: Some(UserPartialResponse {
+                id: "olive".into(),
+                username: "olive".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_row_needs_manage_webhooks() {
+        let app = app_with(crate::permissions::VIEW_CHANNEL);
+        assert!(!app.community_actions().contains(&CommunityAction::Webhooks));
+        let app = app_with(crate::permissions::MANAGE_WEBHOOKS);
+        assert!(app.community_actions().contains(&CommunityAction::Webhooks));
+    }
+
+    #[test]
+    fn the_list_walks_and_the_address_carries_the_token() {
+        let mut app = app_with(crate::permissions::MANAGE_WEBHOOKS);
+        app.open_communities();
+        app.open_guild_webhooks("g".into());
+        assert_eq!(app.community_len(), 0);
+        app.set_guild_webhooks("g", vec![hook()]);
+        assert_eq!(app.community_len(), 1);
+        assert_eq!(app.community_webhooks_guild().as_deref(), Some("g"));
+        let selected = app.community_selected_webhook().unwrap();
+        assert_eq!(
+            app.webhook_url(&selected.id, &selected.token),
+            "https://api.example.invalid/v1/webhooks/w1/s3cret"
+        );
+    }
+
+    /// The token is a bearer credential for the webhook's whole life, so
+    /// nothing that draws a row may carry it.
+    #[test]
+    fn no_row_of_the_list_contains_the_token() {
+        let mut app = app_with(crate::permissions::MANAGE_WEBHOOKS);
+        app.open_communities();
+        app.open_guild_webhooks("g".into());
+        app.set_guild_webhooks("g", vec![hook()]);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+        terminal
+            .draw(|f| crate::ui::community_overlay::render(f, f.area(), &app))
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let screen: String = (0..20)
+            .map(|y| {
+                (0..100)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(screen.contains("deploys"), "{screen}");
+        assert!(!screen.contains("s3cret"), "{screen}");
     }
 }
