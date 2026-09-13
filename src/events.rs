@@ -21,6 +21,22 @@ pub enum AppEvent {
         guild_id: String,
         channels: Vec<ChannelResponse>,
     },
+    GuildVanityLoaded {
+        guild_id: String,
+        vanity: Box<crate::api::types::VanityUrlResponse>,
+    },
+    GuildVanityFailed {
+        guild_id: String,
+        message: String,
+    },
+    GuildAuditLogLoaded {
+        guild_id: String,
+        page: Box<crate::api::types::GuildAuditLogResponse>,
+    },
+    GuildAuditLogFailed {
+        guild_id: String,
+        message: String,
+    },
     GuildChannelsFailed {
         guild_id: String,
         message: String,
@@ -1087,6 +1103,18 @@ pub fn apply_event(
             app.loading_channels.remove(&guild_id);
             app.api_backoff_after_failure(format!("channels:{guild_id}"));
             app.set_status(message);
+        }
+        AppEvent::GuildVanityLoaded { guild_id, vanity } => {
+            app.set_guild_vanity(&guild_id, *vanity);
+        }
+        AppEvent::GuildVanityFailed { guild_id, message } => {
+            app.set_guild_vanity_failed(&guild_id, message);
+        }
+        AppEvent::GuildAuditLogLoaded { guild_id, page } => {
+            app.set_guild_audit_log(&guild_id, *page);
+        }
+        AppEvent::GuildAuditLogFailed { guild_id, message } => {
+            app.set_guild_audit_log_failed(&guild_id, message);
         }
         AppEvent::GuildMembersLoaded { guild_id, members } => {
             app.set_guild_members(&guild_id, members);

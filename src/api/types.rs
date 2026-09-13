@@ -1256,6 +1256,20 @@ pub struct MessageAckEvent {
     pub mention_count: u64,
 }
 
+/// Fluxer's snowflake epoch, 2015-01-01 in Unix milliseconds. A
+/// snowflake's top 42 bits are the milliseconds since then, so an id is
+/// also the time its resource was made.
+pub const SNOWFLAKE_EPOCH_MS: i64 = 1_420_070_400_000;
+
+/// When a snowflake was minted, as an RFC 3339 timestamp, so anything
+/// that has only an id can still be dated.
+pub fn snowflake_timestamp(value: &str) -> Option<String> {
+    let raw = value.trim().parse::<u64>().ok()?;
+    let millis = (raw >> 22) as i64 + SNOWFLAKE_EPOCH_MS;
+    chrono::DateTime::from_timestamp_millis(millis)
+        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+}
+
 pub fn snowflake_sort_key(value: &str) -> u128 {
     value.parse::<u128>().unwrap_or_default()
 }
@@ -1565,6 +1579,49 @@ impl RelationshipResponse {
 /// Bit 2 of a message's `flags`: the server leaves the embeds out of
 /// the message when it is set, which is what "suppress embeds" does.
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
+
+/// The body of `PATCH /guilds/{id}`. Only the fields this client offers
+/// are here; an omitted one keeps what is stored.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ModifyGuildRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// `GET /guilds/{id}/vanity-url`: the community's custom invite code, and
+/// how many have joined through it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VanityUrlResponse {
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub uses: Option<i64>,
+}
+
+/// One recorded change in a community's audit log.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuditLogEntryResponse {
+    #[serde(default, deserialize_with = "deserialize_snowflake_string")]
+    pub id: String,
+    #[serde(default)]
+    pub action_type: i32,
+    #[serde(default, deserialize_with = "deserialize_snowflake_string")]
+    pub user_id: String,
+    #[serde(default)]
+    pub target_id: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// One page of `GET /guilds/{id}/audit-logs`, with the accounts its
+/// entries name so a client need not look each one up.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GuildAuditLogResponse {
+    #[serde(default)]
+    pub audit_log_entries: Vec<AuditLogEntryResponse>,
+    #[serde(default)]
+    pub users: Vec<UserPartialResponse>,
+}
 
 /// One entry of `GET /channels/{id}/messages/pins`: the message and when
 /// it was pinned (which is not the message's own timestamp).

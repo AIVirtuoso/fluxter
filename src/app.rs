@@ -1005,6 +1005,16 @@ pub enum CommunityMode {
         guild_id: String,
         state: InvitesState,
     },
+    /// The community's custom invite code.
+    Vanity {
+        guild_id: String,
+        state: VanityState,
+    },
+    /// What has been done in the community lately.
+    AuditLog {
+        guild_id: String,
+        state: AuditLogState,
+    },
     /// What an invite leads to, looked up before it is taken, so nobody
     /// joins something they cannot see the name of.
     Preview { code: String, state: PreviewState },
@@ -1033,6 +1043,20 @@ pub enum InvitesState {
 }
 
 #[derive(Debug, Clone)]
+pub enum VanityState {
+    Loading,
+    Ready(Box<crate::api::types::VanityUrlResponse>),
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum AuditLogState {
+    Loading,
+    Ready(Box<crate::api::types::GuildAuditLogResponse>),
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
 pub enum CommunityInput {
     /// An invite code or link the reader is pasting or typing.
     JoinCode(String),
@@ -1040,18 +1064,30 @@ pub enum CommunityInput {
     NewName(String),
     /// What to search the directory for.
     Search(String),
+    /// A new name for the community.
+    GuildName(String),
+    /// A custom invite code, or nothing to clear it.
+    VanityCode(String),
 }
 
 impl CommunityInput {
     pub fn text(&self) -> &str {
         match self {
-            Self::JoinCode(t) | Self::NewName(t) | Self::Search(t) => t,
+            Self::JoinCode(t)
+            | Self::NewName(t)
+            | Self::Search(t)
+            | Self::GuildName(t)
+            | Self::VanityCode(t) => t,
         }
     }
 
     pub fn text_mut(&mut self) -> &mut String {
         match self {
-            Self::JoinCode(t) | Self::NewName(t) | Self::Search(t) => t,
+            Self::JoinCode(t)
+            | Self::NewName(t)
+            | Self::Search(t)
+            | Self::GuildName(t)
+            | Self::VanityCode(t) => t,
         }
     }
 
@@ -1060,6 +1096,8 @@ impl CommunityInput {
             Self::JoinCode(_) => "Invite code or link",
             Self::NewName(_) => "Name it",
             Self::Search(_) => "Look for",
+            Self::GuildName(_) => "New name for the community",
+            Self::VanityCode(_) => "Custom code (empty clears it)",
         }
     }
 }
@@ -1236,6 +1274,55 @@ pub struct MessageActionsView {
     pub selected: usize,
 }
 
+/// What an audit log action was, in words. The numbers are the server's
+/// `action_type`; an unknown one is shown as itself rather than hidden,
+/// since a new action is a thing the reader still wants to see.
+pub fn audit_action_phrase(action_type: i32) -> String {
+    let known = match action_type {
+        1 => "changed the community's settings",
+        10 => "made a channel",
+        11 => "changed a channel",
+        12 => "deleted a channel",
+        13 => "added a channel permission",
+        14 => "changed a channel permission",
+        15 => "removed a channel permission",
+        20 => "removed a member",
+        21 => "pruned inactive members",
+        22 => "banned an account",
+        23 => "lifted a ban",
+        24 => "changed a member",
+        25 => "changed a member's roles",
+        26 => "moved a member between voice channels",
+        27 => "disconnected a member from voice",
+        28 => "added a bot",
+        30 => "made a role",
+        31 => "changed a role",
+        32 => "deleted a role",
+        40 => "made an invite",
+        41 => "changed an invite",
+        42 => "revoked an invite",
+        50 => "made a webhook",
+        51 => "changed a webhook",
+        52 => "deleted a webhook",
+        60 => "added an emoji",
+        61 => "changed an emoji",
+        62 => "deleted an emoji",
+        72 => "deleted a message",
+        73 => "deleted several messages",
+        74 => "pinned a message",
+        75 => "unpinned a message",
+        90 => "added a sticker",
+        91 => "changed a sticker",
+        92 => "deleted a sticker",
+        _ => "",
+    };
+    if known.is_empty() {
+        format!("did something the client does not know (action {action_type})")
+    } else {
+        known.to_string()
+    }
+}
+
 /// The categories `POST /reports/message` takes, with the wording the web
 /// client puts on them.
 pub const REPORT_CATEGORIES: [(&str, &str); 12] = [
@@ -1392,6 +1479,9 @@ pub enum CommunityAction {
     Create,
     Discover,
     Invites,
+    Rename,
+    Vanity,
+    AuditLog,
     Leave,
 }
 
@@ -1402,6 +1492,9 @@ impl CommunityAction {
             Self::Create => "Make a community",
             Self::Discover => "Browse the directory",
             Self::Invites => "Invites to this community",
+            Self::Rename => "Rename this community",
+            Self::Vanity => "Custom invite address",
+            Self::AuditLog => "What has been done lately",
             Self::Leave => "Leave this community",
         }
     }
@@ -6108,11 +6201,40 @@ impl App {
             CommunityAction::Create,
             CommunityAction::Discover,
         ];
-        if self.active_guild_id().is_some() {
+        if let Some(guild_id) = self.active_guild_id() {
             out.push(CommunityAction::Invites);
+            let perms = self.guild_permissions(&guild_id);
+            if perms & crate::permissions::MANAGE_GUILD != 0 {
+                out.push(CommunityAction::Rename);
+                out.push(CommunityAction::Vanity);
+            }
+            if perms & crate::permissions::VIEW_AUDIT_LOG != 0 {
+                out.push(CommunityAction::AuditLog);
+            }
             out.push(CommunityAction::Leave);
         }
         out
+    }
+
+    /// The reader's permissions in a community, before any channel's
+    /// overwrites: what a guild-level check reads.
+    pub fn guild_permissions(&self, guild_id: &str) -> u64 {
+        let Some(guild) = self.guilds.iter().find(|g| g.id == guild_id) else {
+            return 0;
+        };
+        if guild.owner_id == self.me.id {
+            return u64::MAX;
+        }
+        let base = guild
+            .permissions
+            .as_deref()
+            .and_then(|p| p.parse::<u64>().ok())
+            .unwrap_or(0);
+        if base & crate::permissions::ADMINISTRATOR != 0 {
+            u64::MAX
+        } else {
+            base
+        }
     }
 
     pub fn open_message_actions(&mut self) -> bool {
@@ -6169,6 +6291,10 @@ impl App {
                 state: InvitesState::Ready(invites),
                 ..
             }) => invites.len(),
+            Some(CommunityMode::AuditLog {
+                state: AuditLogState::Ready(page),
+                ..
+            }) => page.audit_log_entries.len(),
             // nothing to move through while it is still coming, and the
             // preview is one thing rather than a list
             _ => 0,
@@ -7060,6 +7186,101 @@ impl App {
                 state: InvitesState::Ready(invites),
                 ..
             } => invites.get(view.selected).cloned(),
+            _ => None,
+        }
+    }
+
+    pub fn open_guild_vanity(&mut self, guild_id: String) {
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::Vanity {
+                guild_id,
+                state: VanityState::Loading,
+            };
+            view.selected = 0;
+        }
+    }
+
+    pub fn set_guild_vanity(
+        &mut self,
+        for_guild: &str,
+        vanity: crate::api::types::VanityUrlResponse,
+    ) {
+        if let Some(view) = &mut self.community
+            && let CommunityMode::Vanity { guild_id, state } = &mut view.mode
+            && guild_id == for_guild
+        {
+            *state = VanityState::Ready(Box::new(vanity));
+        }
+    }
+
+    pub fn set_guild_vanity_failed(&mut self, for_guild: &str, message: String) {
+        if let Some(view) = &mut self.community
+            && let CommunityMode::Vanity { guild_id, state } = &mut view.mode
+            && guild_id == for_guild
+        {
+            *state = VanityState::Failed(message);
+        }
+    }
+
+    /// The community whose custom invite is on screen.
+    pub fn community_vanity_guild(&self) -> Option<String> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::Vanity { guild_id, .. } => Some(guild_id.clone()),
+            _ => None,
+        }
+    }
+
+    /// The custom invite code on screen, when there is one set.
+    pub fn community_vanity_code(&self) -> Option<String> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::Vanity {
+                state: VanityState::Ready(vanity),
+                ..
+            } => vanity.code.clone().filter(|c| !c.is_empty()),
+            _ => None,
+        }
+    }
+
+    pub fn open_guild_audit_log(&mut self, guild_id: String) {
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::AuditLog {
+                guild_id,
+                state: AuditLogState::Loading,
+            };
+            view.selected = 0;
+        }
+    }
+
+    pub fn set_guild_audit_log(
+        &mut self,
+        for_guild: &str,
+        page: crate::api::types::GuildAuditLogResponse,
+    ) {
+        if let Some(view) = &mut self.community
+            && let CommunityMode::AuditLog { guild_id, state } = &mut view.mode
+            && guild_id == for_guild
+        {
+            *state = AuditLogState::Ready(Box::new(page));
+            view.selected = 0;
+        }
+    }
+
+    pub fn set_guild_audit_log_failed(&mut self, for_guild: &str, message: String) {
+        if let Some(view) = &mut self.community
+            && let CommunityMode::AuditLog { guild_id, state } = &mut view.mode
+            && guild_id == for_guild
+        {
+            *state = AuditLogState::Failed(message);
+        }
+    }
+
+    /// The community whose audit log is on screen.
+    pub fn community_audit_log_guild(&self) -> Option<String> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::AuditLog { guild_id, .. } => Some(guild_id.clone()),
             _ => None,
         }
     }
@@ -10867,5 +11088,132 @@ mod sticker_tests {
         app.set_guild_stickers("guild-1", vec![guild_sticker("1", "one", &[])]);
         app.remove_guild("guild-1");
         assert!(!app.guild_stickers.contains_key("guild-1"));
+    }
+}
+
+/// The community rows that need MANAGE_GUILD or VIEW_AUDIT_LOG, and the
+/// words the audit log is read in.
+#[cfg(test)]
+mod guild_settings_tests {
+    use super::*;
+    use crate::api::types::{
+        AuditLogEntryResponse, GuildAuditLogResponse, GuildResponse, UserPartialResponse,
+        UserPrivateResponse, VanityUrlResponse, WellKnownFluxerResponse,
+    };
+
+    fn app_with(permissions: u64) -> App {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: "olive".into(),
+            permissions: Some(permissions.to_string()),
+            ..Default::default()
+        };
+        App::new(
+            WellKnownFluxerResponse::default(),
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            None,
+            UiSettings::default(),
+        )
+    }
+
+    #[test]
+    fn each_row_needs_its_permission() {
+        let app = app_with(crate::permissions::VIEW_CHANNEL);
+        let rows = app.community_actions();
+        assert!(!rows.contains(&CommunityAction::Rename));
+        assert!(!rows.contains(&CommunityAction::Vanity));
+        assert!(!rows.contains(&CommunityAction::AuditLog));
+
+        let app = app_with(crate::permissions::MANAGE_GUILD);
+        let rows = app.community_actions();
+        assert!(rows.contains(&CommunityAction::Rename));
+        assert!(rows.contains(&CommunityAction::Vanity));
+        assert!(!rows.contains(&CommunityAction::AuditLog));
+
+        let app = app_with(crate::permissions::VIEW_AUDIT_LOG);
+        assert!(app.community_actions().contains(&CommunityAction::AuditLog));
+    }
+
+    /// The owner holds everything, permissions field or not.
+    #[test]
+    fn the_owner_gets_every_row() {
+        let mut app = app_with(0);
+        if let Some(guild) = app.guilds.first_mut() {
+            guild.owner_id = "me".into();
+        }
+        let rows = app.community_actions();
+        assert!(rows.contains(&CommunityAction::Rename));
+        assert!(rows.contains(&CommunityAction::AuditLog));
+    }
+
+    #[test]
+    fn the_audit_log_counts_its_rows_and_keeps_the_code() {
+        let mut app =
+            app_with(crate::permissions::VIEW_AUDIT_LOG | crate::permissions::MANAGE_GUILD);
+        app.open_communities();
+        app.open_guild_audit_log("g".into());
+        assert_eq!(app.community_len(), 0);
+        app.set_guild_audit_log(
+            "g",
+            GuildAuditLogResponse {
+                audit_log_entries: vec![
+                    AuditLogEntryResponse {
+                        id: "1501314428688998184".into(),
+                        action_type: 22,
+                        user_id: "olive".into(),
+                        target_id: Some("spammer".into()),
+                        reason: Some("Advertising".into()),
+                    },
+                    AuditLogEntryResponse {
+                        id: "1501314428688998185".into(),
+                        action_type: 30,
+                        user_id: "olive".into(),
+                        ..Default::default()
+                    },
+                ],
+                users: vec![UserPartialResponse {
+                    id: "olive".into(),
+                    username: "olive".into(),
+                    ..Default::default()
+                }],
+            },
+        );
+        assert_eq!(app.community_len(), 2);
+        assert_eq!(app.community_audit_log_guild().as_deref(), Some("g"));
+
+        app.open_guild_vanity("g".into());
+        assert!(app.community_vanity_code().is_none());
+        app.set_guild_vanity(
+            "g",
+            VanityUrlResponse {
+                code: Some("ours".into()),
+                uses: Some(12),
+            },
+        );
+        assert_eq!(app.community_vanity_code().as_deref(), Some("ours"));
+    }
+
+    #[test]
+    fn every_action_has_words_and_an_unknown_one_says_its_number() {
+        assert_eq!(audit_action_phrase(22), "banned an account");
+        assert_eq!(audit_action_phrase(75), "unpinned a message");
+        assert!(audit_action_phrase(999).contains("999"));
+    }
+
+    /// A snowflake dates itself, which is how an audit entry is timed.
+    #[test]
+    fn an_entry_id_carries_its_time() {
+        let stamp = crate::api::types::snowflake_timestamp("1501314428688998184").unwrap();
+        assert!(stamp.starts_with("2026-"), "{stamp}");
+        assert!(crate::api::types::snowflake_timestamp("not a snowflake").is_none());
     }
 }

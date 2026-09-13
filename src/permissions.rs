@@ -1,6 +1,10 @@
 use crate::api::types::PermissionOverwrite;
 
 pub const ADMINISTRATOR: u64 = 0x8;
+/// Changing a community's settings, its invites and its custom URL.
+pub const MANAGE_GUILD: u64 = 1 << 5;
+/// Reading a community's audit log.
+pub const VIEW_AUDIT_LOG: u64 = 1 << 7;
 pub const ADD_REACTIONS: u64 = 0x40;
 pub const VIEW_CHANNEL: u64 = 0x400;
 pub const SEND_MESSAGES: u64 = 0x800;

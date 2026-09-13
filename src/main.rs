@@ -2004,6 +2004,37 @@ fn handle_key_event(
                     }
                 }
             }
+            KeyCode::Char('r') if app.community_vanity_guild().is_some() => {
+                if let Some(view) = app.community.as_mut() {
+                    view.input = Some(crate::app::CommunityInput::VanityCode(String::new()));
+                }
+            }
+            KeyCode::Char('R') if app.community_audit_log_guild().is_some() => {
+                if let Some(guild_id) = app.community_audit_log_guild() {
+                    app.open_guild_audit_log(guild_id.clone());
+                    spawn_guild_audit_log(client.clone(), event_tx.clone(), guild_id);
+                }
+            }
+            KeyCode::Char('x') | KeyCode::Delete if app.community_vanity_guild().is_some() => {
+                if let Some(guild_id) = app.community_vanity_guild() {
+                    app.set_status("Clearing the custom invite…");
+                    spawn_set_vanity(client.clone(), event_tx.clone(), guild_id, None);
+                }
+            }
+            KeyCode::Char('y') if app.community_vanity_guild().is_some() => {
+                if let Some(code) = app.community_vanity_code() {
+                    let link = app.invite_link(&code);
+                    let clipboard = crate::compose::copy_to_system_clipboard(&link);
+                    app.cut_buffer = link;
+                    app.set_status(if clipboard {
+                        "Copied the custom invite."
+                    } else {
+                        "Copied the custom invite: no clipboard program, Alt+V pastes it."
+                    });
+                } else {
+                    app.set_status("There is no custom invite to copy.");
+                }
+            }
             KeyCode::Char('y') => {
                 if let Some(invite) = app.community_selected_invite() {
                     let link = app.invite_link(&invite.code);
@@ -3720,6 +3751,34 @@ fn run_community_action(
             app.open_guild_invites(guild_id.clone());
             spawn_guild_invites(client.clone(), event_tx.clone(), guild_id);
         }
+        crate::app::CommunityAction::Rename => {
+            let current = app
+                .active_guild_id()
+                .and_then(|id| {
+                    app.guilds
+                        .iter()
+                        .find(|g| g.id == id)
+                        .map(|g| g.name.clone())
+                })
+                .unwrap_or_default();
+            if let Some(view) = app.community.as_mut() {
+                view.input = Some(crate::app::CommunityInput::GuildName(current));
+            }
+        }
+        crate::app::CommunityAction::Vanity => {
+            let Some(guild_id) = app.active_guild_id() else {
+                return;
+            };
+            app.open_guild_vanity(guild_id.clone());
+            spawn_guild_vanity(client.clone(), event_tx.clone(), guild_id);
+        }
+        crate::app::CommunityAction::AuditLog => {
+            let Some(guild_id) = app.active_guild_id() else {
+                return;
+            };
+            app.open_guild_audit_log(guild_id.clone());
+            spawn_guild_audit_log(client.clone(), event_tx.clone(), guild_id);
+        }
         crate::app::CommunityAction::Leave => {
             let Some(guild_id) = app.active_guild_id() else {
                 return;
@@ -3909,6 +3968,41 @@ fn run_community_input(
             app.dismiss_communities();
             app.set_status(format!("Making {name}…"));
             spawn_create_guild(client.clone(), event_tx.clone(), name);
+        }
+        crate::app::CommunityInput::GuildName(text) => {
+            let Some(guild_id) = app.active_guild_id() else {
+                return;
+            };
+            let name = text.trim().to_string();
+            if name.is_empty() {
+                app.set_status("Give it a name.");
+                return;
+            }
+            app.dismiss_communities();
+            app.set_status("Renaming…");
+            spawn_modify_guild(
+                client.clone(),
+                event_tx.clone(),
+                guild_id,
+                crate::api::types::ModifyGuildRequest { name: Some(name) },
+                "Renamed.",
+            );
+        }
+        crate::app::CommunityInput::VanityCode(text) => {
+            let Some(guild_id) = app.community_vanity_guild() else {
+                return;
+            };
+            let code = text.trim().to_string();
+            if let Some(view) = app.community.as_mut() {
+                view.input = None;
+            }
+            app.set_status("Changing the custom invite…");
+            spawn_set_vanity(
+                client.clone(),
+                event_tx.clone(),
+                guild_id,
+                (!code.is_empty()).then_some(code),
+            );
         }
         crate::app::CommunityInput::Search(text) => {
             let query = text.trim().to_string();
@@ -4178,6 +4272,113 @@ fn spawn_close_channel(
             }
             Err(err) => {
                 let _ = event_tx.send(AppEvent::ApiError(format!("Failed to close it: {err}")));
+            }
+        }
+    });
+}
+
+fn spawn_modify_guild(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    body: crate::api::types::ModifyGuildRequest,
+    done: &str,
+) {
+    let done = done.to_string();
+    tokio::spawn(async move {
+        match client.modify_guild(&guild_id, &body).await {
+            // GUILD_UPDATE brings the new name back to every session
+            Ok(_) => {
+                let _ = event_tx.send(AppEvent::SetStatus(done));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to change it: {err}")));
+            }
+        }
+    });
+}
+
+fn spawn_guild_vanity(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+) {
+    tokio::spawn(async move {
+        match client.guild_vanity_url(&guild_id).await {
+            Ok(vanity) => {
+                let _ = event_tx.send(AppEvent::GuildVanityLoaded {
+                    guild_id,
+                    vanity: Box::new(vanity),
+                });
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::GuildVanityFailed {
+                    guild_id,
+                    message: format!("Could not read it: {err}"),
+                });
+            }
+        }
+    });
+}
+
+/// Set or clear the custom invite, then read it back so the view shows
+/// what the server settled on.
+fn spawn_set_vanity(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    code: Option<String>,
+) {
+    tokio::spawn(async move {
+        match client
+            .set_guild_vanity_url(&guild_id, code.as_deref())
+            .await
+        {
+            Ok(()) => {
+                let _ = event_tx.send(AppEvent::SetStatus(match &code {
+                    Some(_) => "Custom invite set.".to_string(),
+                    None => "Custom invite cleared.".to_string(),
+                }));
+                match client.guild_vanity_url(&guild_id).await {
+                    Ok(vanity) => {
+                        let _ = event_tx.send(AppEvent::GuildVanityLoaded {
+                            guild_id,
+                            vanity: Box::new(vanity),
+                        });
+                    }
+                    Err(err) => {
+                        let _ = event_tx.send(AppEvent::GuildVanityFailed {
+                            guild_id,
+                            message: format!("Could not read it: {err}"),
+                        });
+                    }
+                }
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to change it: {err}")));
+            }
+        }
+    });
+}
+
+fn spawn_guild_audit_log(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+) {
+    tokio::spawn(async move {
+        match client.guild_audit_logs(&guild_id, 50).await {
+            Ok(page) => {
+                let _ = event_tx.send(AppEvent::GuildAuditLogLoaded {
+                    guild_id,
+                    page: Box::new(page),
+                });
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::GuildAuditLogFailed {
+                    guild_id,
+                    message: format!("Could not read the log: {err}"),
+                });
             }
         }
     });
