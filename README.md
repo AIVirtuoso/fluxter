@@ -897,11 +897,27 @@ row, and those work straight from the message pane without the menu.
 | Remove a file from it | | Takes one attachment off without deleting the message. With several files it asks which. Your own messages only. |
 | Delete | **Ctrl+D** | As before. |
 | Delete the marked messages | | **m** marks a message (a red cross appears in its margin); this deletes every marked message of the channel in one call. Asks a second time first. Needs **Manage Messages** and at least two marks, and the server refuses messages more than two weeks old. |
-| Report to the moderators | | Asks which of the server's twelve categories, then sends it. Other people's messages only. |
+| Report this message to the moderators | | Asks which of the server's twelve categories, then sends it. Other people's messages only. |
+| Report the account to the moderators | | A report about the person rather than the message, with its own seven categories. Names the community you are in, where you are in one. |
 
 Pins, bookmarks, bulk deletes and cleared reactions arrive over the
 gateway as well, so a change made in another client shows here without a
 reload.
+
+### Three things to report, three sets of categories
+
+A **message**, an **account** and a **community** are three different
+reports to the instance's moderators, and the server keeps a different
+category list for each -- an account can be reported for its profile, a
+community for coordinating raids, neither of which makes sense about a
+message. The first two are in the message menu and the third in the
+community menu (**Alt+C**).
+
+None of them captures evidence: the server records who reported what, and
+for a message report the message's own id, and copies no media. There are
+**five reports an hour** across all three, and an account whose email is
+unverified cannot report at all -- both are the server's answer, shown as it
+came.
 
 ## Searching
 
@@ -998,6 +1014,7 @@ first three are always there, the last two only inside a community.
 | **Make a community** | Asks for a name and makes it. You are its owner. |
 | **Browse the directory** | The instance's discovery listing. **/** searches it, **Enter** joins straight from the list without an invite. |
 | **Invites to this community** | Every invite you may see. **y** copies its link, **+** makes one to the channel now open, **x** revokes. |
+| **Report this community** | A report about the community itself, with its own nine categories. Not offered for one you own, which the server refuses anyway. |
 | **Leave this community** | Leaves it. A community you own cannot be left, and the client says so rather than sending a call the server would refuse. |
 
 ### An invite is looked up before it is taken

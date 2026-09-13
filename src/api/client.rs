@@ -1403,6 +1403,52 @@ impl FluxerHttpClient {
 
     /// Report a message to the instance's moderators. `category` is one
     /// of the server's fixed set, see `REPORT_CATEGORIES`.
+    /// Report an account to the instance's moderators, with the community
+    /// the conduct happened in where there is one. The reader cannot
+    /// report themselves, which the menu does not offer anyway.
+    pub async fn report_user(
+        &self,
+        user_id: &str,
+        category: &str,
+        guild_id: Option<&str>,
+    ) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            user_id: &'a str,
+            category: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            guild_id: Option<&'a str>,
+        }
+        self.send_empty(
+            Method::POST,
+            "/reports/user",
+            Some(&Body {
+                user_id,
+                category,
+                guild_id,
+            }),
+            "report the account",
+        )
+        .await
+    }
+
+    /// Report a community to the instance's moderators. A member needs
+    /// nothing further; the server refuses an owner reporting their own.
+    pub async fn report_guild(&self, guild_id: &str, category: &str) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            guild_id: &'a str,
+            category: &'a str,
+        }
+        self.send_empty(
+            Method::POST,
+            "/reports/guild",
+            Some(&Body { guild_id, category }),
+            "report the community",
+        )
+        .await
+    }
+
     pub async fn report_message(
         &self,
         channel_id: &str,
