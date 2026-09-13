@@ -1146,6 +1146,9 @@ first three are always there, the last two only inside a community.
 | **Report this community** | A report about the community itself, with its own nine categories. Not offered for one you own, which the server refuses anyway. |
 | **Banned accounts** | Every ban of the community: who, permanent or until when, and why. **x** lifts one, **R** reloads. Needs **Ban Members**. |
 | **Roles in this community** | Every role, highest first, each in its own colour. **+** makes one, **r** renames, **h** shows its members as their own group in the member list, **m** lets anybody mention it, **x** deletes it after asking. Needs **Manage Roles**. |
+| **Rename this community** | The current name is there to edit. Needs **Manage Community**. |
+| **Custom invite address** | The community's own short link, how many have joined through it, **r** to set one, **y** to copy it, **x** to clear it. A code needs the community to have the feature for it, and the server says so when it has not. Needs **Manage Community**. |
+| **What has been done lately** | The audit log: who did what, when, and the reason they gave. The server keeps 45 days of it; this shows the newest fifty, **R** reloads. Needs **View Audit Log**. |
 | **Leave this community** | Leaves it. A community you own cannot be left, and the client says so rather than sending a call the server would refuse. |
 
 ### An invite is looked up before it is taken
@@ -1208,6 +1211,30 @@ the menu shows that as it came.
 
 The channel list redraws itself from the gateway, so a channel made,
 renamed or deleted -- here or in another client -- appears as it happens.
+### What the audit log shows
+
+One line each: who did it, what it was in plain words, who or what it was
+done to where the page names them, when, and the reason if one was
+recorded. An action this client does not have words for says its number
+rather than hiding, so a new one added to the server still shows.
+
+Two things about it worth knowing. Entries **expire after 45 days** and are
+then gone from the server, so an empty log is not proof nothing happened.
+And a message-deletion run can be **consolidated** into one fresh entry by
+the server, which gives that entry a newer id than the ones around it.
+
+### What this client will not change about a community
+
+**Deleting a community** and **handing it to somebody else** both need the
+server's *sudo mode* -- your password or a second factor, proved on the
+request itself. This client logs in by desktop handoff and never holds your
+password, so neither is offered here rather than half-offered. The same
+goes for the community's **MFA level**, which only its owner can change and
+only with sudo mode.
+
+Icons, banners, verification levels and the rest of the settings page are
+not here either: those are pictures and enumerations that want a form, and
+this client would be a poor place to fill one in.
 
 ## Message formatting
 
@@ -1446,6 +1473,7 @@ close. The profile of a selected message's author is on **u** now.
 
 | **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites or its banned accounts, or leave it (see "Communities and invites").                                                                                                        |
 | **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites or its roles, or leave it (see "Communities and invites").                                                                                                        |
+| **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites, rename it, set its custom invite address, read its audit log, or leave it (see "Communities and invites").                                                                                                        |
 
 | **Alt+V**               | **Voice**: join the open voice channel, ring a conversation, answer or turn down a call, mute, deafen, leave (see "Voice").                                                                                                                             |
 | **F1**                  | **Keybindings** overlay - **↑** / **↓** / **PgUp** / **PgDn** scroll when it does not fit (**Esc** / **Enter** / **q** to close).                                                                                                                        |

@@ -5,6 +5,8 @@ pub const BAN_MEMBERS: u64 = 1 << 2;
 pub const ADMINISTRATOR: u64 = 0x8;
 pub const MANAGE_GUILD: u64 = 1 << 5;
 pub const MANAGE_CHANNELS: u64 = 1 << 4;
+/// Reading a community's audit log.
+pub const VIEW_AUDIT_LOG: u64 = 1 << 7;
 pub const ADD_REACTIONS: u64 = 0x40;
 pub const VIEW_CHANNEL: u64 = 0x400;
 pub const SEND_MESSAGES: u64 = 0x800;

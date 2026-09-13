@@ -2,7 +2,9 @@
 //! community's own invites. One overlay in three modes, since each of
 //! them is a list and a cursor.
 
-use crate::app::{App, BansState, CommunityMode, DiscoverState, InvitesState};
+use crate::app::{
+    App, AuditLogState, BansState, CommunityMode, DiscoverState, InvitesState, VanityState,
+};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -457,6 +459,119 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 format!(" Delete {name}? "),
                 rows,
                 "\u{2191}/\u{2193} move  \u{b7}  Enter choose  \u{b7}  Esc back".to_string(),
+            )
+        }
+        CommunityMode::Vanity { guild_id, state } => {
+            let name = app
+                .guilds
+                .iter()
+                .find(|g| &g.id == guild_id)
+                .map(|g| g.name.clone())
+                .unwrap_or_default();
+            let rows = match state {
+                VanityState::Loading => vec![Line::from(Span::styled("  Loading…", muted))],
+                VanityState::Failed(message) => {
+                    vec![Line::from(Span::styled(format!("  {message}"), muted))]
+                }
+                VanityState::Ready(vanity) => match vanity.code.as_deref() {
+                    Some(code) if !code.is_empty() => {
+                        let mut rows = vec![Line::from(vec![
+                            Span::styled("  ", text),
+                            Span::styled(app.invite_link(code), text),
+                        ])];
+                        if let Some(uses) = vanity.uses {
+                            rows.push(Line::from(Span::styled(
+                                format!("  {uses} have joined through it"),
+                                muted,
+                            )));
+                        }
+                        rows
+                    }
+                    _ => vec![Line::from(Span::styled("  No custom address set.", muted))],
+                },
+            };
+            (
+                format!(" Custom invite for {name} "),
+                rows,
+                "r set it  \u{b7}  y copy the link  \u{b7}  x clear it  \u{b7}  Esc back"
+                    .to_string(),
+            )
+        }
+        CommunityMode::AuditLog { guild_id, state } => {
+            let name = app
+                .guilds
+                .iter()
+                .find(|g| &g.id == guild_id)
+                .map(|g| g.name.clone())
+                .unwrap_or_default();
+            let rows = match state {
+                AuditLogState::Loading => vec![Line::from(Span::styled("  Loading…", muted))],
+                AuditLogState::Failed(message) => {
+                    vec![Line::from(Span::styled(format!("  {message}"), muted))]
+                }
+                AuditLogState::Ready(page) if page.audit_log_entries.is_empty() => {
+                    vec![Line::from(Span::styled(
+                        "  Nothing in the last 45 days.",
+                        muted,
+                    ))]
+                }
+                AuditLogState::Ready(page) => page
+                    .audit_log_entries
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entry)| {
+                        let selected = index == view.selected;
+                        // the page carries the accounts it names, so the
+                        // actor needs no lookup of its own
+                        let actor = page
+                            .users
+                            .iter()
+                            .find(|u| u.id == entry.user_id)
+                            .map(crate::app::display_name)
+                            .unwrap_or_else(|| "somebody".to_string());
+                        let target = entry
+                            .target_id
+                            .as_deref()
+                            .and_then(|id| page.users.iter().find(|u| u.id == id))
+                            .map(|u| format!(" \u{2192} {}", crate::app::display_name(u)))
+                            .unwrap_or_default();
+                        // an entry's id is a snowflake, so it dates itself
+                        let when = crate::api::types::snowflake_timestamp(&entry.id)
+                            .map(|t| {
+                                crate::ui::message_pane::format_timestamp(
+                                    &t,
+                                    app.ui_settings.clock_12h,
+                                )
+                            })
+                            .unwrap_or_default();
+                        let mut spans = vec![
+                            Span::styled(if selected { " \u{25B8} " } else { "   " }, accent),
+                            Span::styled(
+                                actor,
+                                if selected {
+                                    text.add_modifier(Modifier::BOLD)
+                                } else {
+                                    text
+                                },
+                            ),
+                            Span::styled(
+                                format!(" {}", crate::app::audit_action_phrase(entry.action_type)),
+                                text,
+                            ),
+                            Span::styled(target, dim),
+                            Span::styled(format!("   {when}"), muted),
+                        ];
+                        if let Some(reason) = entry.reason.as_deref().filter(|r| !r.is_empty()) {
+                            spans.push(Span::styled(format!("   \u{201c}{reason}\u{201d}"), dim));
+                        }
+                        Line::from(spans)
+                    })
+                    .collect(),
+            };
+            (
+                format!(" Lately in {name} "),
+                rows,
+                "\u{2191}/\u{2193} move  \u{b7}  R reload  \u{b7}  Esc back".to_string(),
             )
         }
     };

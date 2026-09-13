@@ -1185,6 +1185,22 @@ impl FluxerHttpClient {
         )
         .await
     }
+    /// Change a community's settings. Only the name is sent from here;
+    /// needs MANAGE_GUILD.
+    pub async fn modify_guild(
+        &self,
+        guild_id: &str,
+        body: &crate::api::types::ModifyGuildRequest,
+    ) -> Result<GuildResponse> {
+        self.send_json(
+            Method::PATCH,
+            &format!("/guilds/{guild_id}"),
+            None::<&()>,
+            Some(body),
+            false,
+        )
+        .await
+    }
 
     /// Tell the provider one of its GIFs was shared. It changes nothing
     /// for the reader and is what the provider's terms ask for, so a
@@ -1250,6 +1266,57 @@ impl FluxerHttpClient {
             Method::GET,
             &format!("/guilds/{guild_id}/bans"),
             None::<&()>,
+            None,
+            false,
+        )
+        .await
+    }
+    /// The community's custom invite code, and how many joined through it.
+    pub async fn guild_vanity_url(
+        &self,
+        guild_id: &str,
+    ) -> Result<crate::api::types::VanityUrlResponse> {
+        self.send_json::<(), (), crate::api::types::VanityUrlResponse>(
+            Method::GET,
+            &format!("/guilds/{guild_id}/vanity-url"),
+            None::<&()>,
+            None,
+            false,
+        )
+        .await
+    }
+
+    /// Set the custom invite code, or clear it with None. A code needs the
+    /// community to have the VANITY_URL feature, which the server checks.
+    pub async fn set_guild_vanity_url(&self, guild_id: &str, code: Option<&str>) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            code: Option<&'a str>,
+        }
+        self.send_empty(
+            Method::PATCH,
+            &format!("/guilds/{guild_id}/vanity-url"),
+            Some(&Body { code }),
+            "change the custom invite",
+        )
+        .await
+    }
+
+    /// A page of the community's audit log, newest first. Needs
+    /// VIEW_AUDIT_LOG. Entries older than 45 days are gone.
+    pub async fn guild_audit_logs(
+        &self,
+        guild_id: &str,
+        limit: u32,
+    ) -> Result<crate::api::types::GuildAuditLogResponse> {
+        #[derive(Serialize)]
+        struct Query {
+            limit: u32,
+        }
+        self.send_json::<Query, (), crate::api::types::GuildAuditLogResponse>(
+            Method::GET,
+            &format!("/guilds/{guild_id}/audit-logs"),
+            Some(&Query { limit }),
             None,
             false,
         )
