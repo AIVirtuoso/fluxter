@@ -2138,6 +2138,20 @@ fn handle_key_event(
         return;
     }
 
+    if app.sessions.is_some() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.dismiss_sessions(),
+            KeyCode::Up | KeyCode::Char('k') => app.sessions_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.sessions_move(1),
+            KeyCode::Char('R') => {
+                app.open_sessions();
+                spawn_sessions_load(client.clone(), event_tx.clone());
+            }
+            _ => {}
+        }
+        return;
+    }
+
     if app.pins.is_some() {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => app.dismiss_pins(),
@@ -3051,6 +3065,17 @@ fn handle_key_event(
             if let Some((user_id, guild_id)) = app.open_profile_of_selected() {
                 spawn_profile_load(client.clone(), event_tx.clone(), user_id, guild_id);
             }
+        }
+        // Alt+Z = where the account is signed in
+        KeyCode::Char('z') | KeyCode::Char('Z')
+            if key.modifiers.contains(KeyModifiers::ALT)
+                && matches!(
+                    app.focus,
+                    Focus::Servers | Focus::Channels | Focus::Messages
+                ) =>
+        {
+            app.open_sessions();
+            spawn_sessions_load(client.clone(), event_tx.clone());
         }
         // R = refresh
         KeyCode::Char('R') => {
@@ -4843,6 +4868,23 @@ fn spawn_mentions_dismiss(
                 let _ = event_tx.send(AppEvent::SetStatus(format!(
                     "Failed to dismiss ping: {err}"
                 )));
+            }
+        }
+    });
+}
+
+/// Read the account's live sessions. Nothing here can end one: that needs
+/// the server's sudo mode, and the overlay says so.
+fn spawn_sessions_load(client: FluxerHttpClient, event_tx: UnboundedSender<AppEvent>) {
+    tokio::spawn(async move {
+        match client.auth_sessions().await {
+            Ok(sessions) => {
+                let _ = event_tx.send(AppEvent::SessionsLoaded { sessions });
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::SessionsFailed {
+                    message: format!("Could not read them: {err}"),
+                });
             }
         }
     });

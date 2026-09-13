@@ -1013,6 +1013,21 @@ An invite made with **+** is a day long with no limit on uses, which is
 what the server itself defaults to, and its link goes on the clipboard as
 soon as it exists.
 
+## Where you are signed in
+
+**Alt+Z** lists the account's live sessions, newest activity first: what
+each one is (the client, with the device class and the browser or operating
+system beside it), the semi-redacted address it was last seen from, roughly
+where that is, and when it was last used. **R** reloads, **Esc** closes.
+
+It is a **read and nothing more**. Ending a session needs the server's sudo
+mode -- your password or a second factor, proved on the request -- and this
+client signs in by desktop handoff and never holds either, so the overlay
+says to sign the others out from the web client rather than offering a key
+that would fail. A session the server could not identify still appears, as
+"an unrecognised client", because a sign-in you do not recognise is the
+reason to look at all.
+
 ## Message formatting
 
 Messages are drawn with the markup Fluxer's own parser understands, so
@@ -1236,6 +1251,7 @@ close. The profile of a selected message's author is on **u** now.
 | **U**                   | Jump to the **new messages** line (see "The new messages line").                                                                                                                                                                                        |
 | **Alt+M**               | **Member list** of the open channel, in a column beside the messages (see "The member list"). **Alt+J** / **Alt+K** scroll it. Closes itself in a direct message; not drawn below 80 columns.                                                            |
 
+| **Alt+Z**               | **Where you are signed in**: the account's live sessions, what each is and when it was last used (see "Where you are signed in").                                                                          |
 | **Alt+F**               | **Friends**: friends, the requests both ways, and the accounts you have blocked (see "Friends and blocking"). **←** / **→** switch group, **+** adds by tag, **Esc** closes.                                                                             |
 
 | **Alt+P**               | **Pinned messages** of the open channel, newest pin first. **↑** / **↓** move, **Enter** jumps to one, **x** unpins it, **R** reloads, **Esc** / **q** close. Opening the list marks the channel's pins seen.                                            |

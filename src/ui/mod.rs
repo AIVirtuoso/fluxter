@@ -25,6 +25,7 @@ pub mod reaction_users_overlay;
 pub mod saved_overlay;
 pub mod search_overlay;
 pub mod server_notifications_overlay;
+pub mod sessions_overlay;
 pub mod settings_overlay;
 pub mod sidebar;
 pub(crate) mod span_wrap;
@@ -144,6 +145,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         reaction_users_overlay::render(frame, area, app);
     } else if app.message_actions.is_some() {
         message_actions::render(frame, area, app);
+    } else if app.sessions.is_some() {
+        sessions_overlay::render(frame, area, app);
     } else if app.search.is_some() {
         search_overlay::render(frame, area, app);
     } else if app.conversation.is_some() {

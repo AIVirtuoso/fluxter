@@ -1236,6 +1236,22 @@ pub struct MessageActionsView {
     pub selected: usize,
 }
 
+/// Where the account is signed in: Alt+Z, a read of the server's session
+/// list. Ending one needs sudo mode, which this client cannot give, so
+/// the overlay says where to do that instead of offering a key that fails.
+#[derive(Debug)]
+pub struct SessionsView {
+    pub state: SessionsState,
+    pub selected: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum SessionsState {
+    Loading,
+    Ready(Vec<crate::api::types::AuthSessionResponse>),
+    Failed(String),
+}
+
 /// The categories `POST /reports/message` takes, with the wording the web
 /// client puts on them.
 pub const REPORT_CATEGORIES: [(&str, &str); 12] = [
@@ -1639,6 +1655,8 @@ pub struct App {
     pub relationships_version: u64,
     /// The message actions menu while it is open.
     pub message_actions: Option<MessageActionsView>,
+    /// Where the account is signed in, while the overlay is open.
+    pub sessions: Option<SessionsView>,
     /// The pinned-messages overlay while it is open.
     pub pins: Option<PinsView>,
     /// The bookmarked-messages overlay while it is open.
@@ -1894,6 +1912,7 @@ impl App {
             relationships: HashMap::new(),
             relationships_version: 0,
             message_actions: None,
+            sessions: None,
             pins: None,
             saved: None,
             reaction_users: None,
@@ -6115,6 +6134,51 @@ impl App {
         out
     }
 
+    // Alt+Z: where the account is signed in
+
+    pub fn open_sessions(&mut self) {
+        self.close_overlays();
+        self.sessions = Some(SessionsView {
+            state: SessionsState::Loading,
+            selected: 0,
+        });
+    }
+
+    pub fn dismiss_sessions(&mut self) {
+        self.sessions = None;
+    }
+
+    pub fn set_sessions_loaded(&mut self, sessions: Vec<crate::api::types::AuthSessionResponse>) {
+        if let Some(view) = &mut self.sessions {
+            view.state = SessionsState::Ready(sessions);
+            view.selected = 0;
+        }
+    }
+
+    pub fn set_sessions_failed(&mut self, message: String) {
+        if let Some(view) = &mut self.sessions {
+            view.state = SessionsState::Failed(message);
+        }
+    }
+
+    pub fn sessions_len(&self) -> usize {
+        match self.sessions.as_ref().map(|v| &v.state) {
+            Some(SessionsState::Ready(sessions)) => sessions.len(),
+            _ => 0,
+        }
+    }
+
+    pub fn sessions_move(&mut self, delta: isize) {
+        let count = self.sessions_len();
+        if let Some(view) = &mut self.sessions {
+            view.selected = if count == 0 {
+                0
+            } else {
+                (view.selected as isize + delta).clamp(0, count as isize - 1) as usize
+            };
+        }
+    }
+
     pub fn open_message_actions(&mut self) -> bool {
         let Some(msg) = self.selected_message() else {
             return false;
@@ -6475,6 +6539,7 @@ impl App {
         self.channel_picker = None;
         self.pings = None;
         self.message_actions = None;
+        self.sessions = None;
         self.pins = None;
         self.saved = None;
         self.reaction_users = None;

@@ -152,6 +152,20 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// Every live sign-in of the account, newest activity first. Ending
+    /// one needs the server's sudo mode, which this client cannot give,
+    /// so this is a read.
+    pub async fn auth_sessions(&self) -> Result<Vec<crate::api::types::AuthSessionResponse>> {
+        self.send_json::<(), (), Vec<crate::api::types::AuthSessionResponse>>(
+            Method::GET,
+            "/auth/sessions",
+            None::<&()>,
+            None,
+            false,
+        )
+        .await
+    }
+
     pub async fn current_user_settings(&self) -> Result<UserSettingsResponse> {
         self.send_json::<(), (), UserSettingsResponse>(
             Method::GET,
