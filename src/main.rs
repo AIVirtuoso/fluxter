@@ -1997,7 +1997,9 @@ fn handle_key_event(
             // r renames the role under the cursor, h shows its members
             // apart, m lets anybody mention it, x deletes it
             KeyCode::Char('r') if app.community_selected_role().is_some() => {
-                if let Some(role) = app.community_selected_role()
+                if app.community_selected_role_is_everyone() {
+                    app.set_status(EVERYONE_ROLE_STAYS);
+                } else if let Some(role) = app.community_selected_role()
                     && let Some(view) = app.community.as_mut()
                 {
                     view.input = Some(crate::app::CommunityInput::RenameRole {
@@ -2013,7 +2015,9 @@ fn handle_key_event(
                         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 let hoist = matches!(key.code, KeyCode::Char('h'));
-                if let (Some(role), Some(guild_id)) =
+                if app.community_selected_role_is_everyone() {
+                    app.set_status(EVERYONE_ROLE_STAYS);
+                } else if let (Some(role), Some(guild_id)) =
                     (app.community_selected_role(), app.community_roles_guild())
                 {
                     let body = if hoist {
@@ -2065,18 +2069,11 @@ fn handle_key_event(
                     });
                 }
             }
+            // x asks first: every member loses the role, and it does not
+            // come back
             KeyCode::Char('x') | KeyCode::Delete if app.community_selected_role().is_some() => {
-                if let (Some(role), Some(guild_id)) =
-                    (app.community_selected_role(), app.community_roles_guild())
-                {
-                    app.set_status(format!("Deleting {}…", role.name));
-                    spawn_delete_role(
-                        client.clone(),
-                        event_tx.clone(),
-                        guild_id,
-                        role.id,
-                        role.name,
-                    );
+                if !app.ask_role_delete() {
+                    app.set_status(EVERYONE_ROLE_STAYS);
                 }
             }
             KeyCode::Char('x') | KeyCode::Delete => {
@@ -3735,6 +3732,15 @@ fn run_community_action(
     client: &FluxerHttpClient,
     event_tx: &UnboundedSender<AppEvent>,
 ) {
+    // the role deletion question: Enter on "Yes" deletes, on "No" goes back
+    if let Some((guild_id, role_id, name, yes)) = app.community_role_delete_choice() {
+        app.community_back();
+        if yes {
+            app.set_status(format!("Deleting {name}…"));
+            spawn_delete_role(client.clone(), event_tx.clone(), guild_id, role_id, name);
+        }
+        return;
+    }
     // the invite preview: Enter takes it
     if let Some(invite) = app.previewed_invite() {
         let where_ = invite.destination();
@@ -4296,6 +4302,10 @@ fn spawn_close_channel(
         }
     });
 }
+
+/// What the keys say when the cursor is on the everyone role.
+const EVERYONE_ROLE_STAYS: &str =
+    "@everyone is every member's: it cannot be renamed, shown apart or deleted.";
 
 /// Make a role. GUILD_ROLE_CREATE brings it back, so the list redraws
 /// itself.

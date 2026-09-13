@@ -1007,6 +1007,12 @@ pub enum CommunityMode {
     },
     /// A community's roles, to make, rename, hoist or delete one.
     Roles { guild_id: String },
+    /// The second press a role deletion asks for: every member loses it.
+    ConfirmRoleDelete {
+        guild_id: String,
+        role_id: String,
+        name: String,
+    },
     /// What an invite leads to, looked up before it is taken, so nobody
     /// joins something they cannot see the name of.
     Preview { code: String, state: PreviewState },
@@ -6285,6 +6291,7 @@ impl App {
             }) => invites.len(),
             // the roles are already in hand: READY carries them
             Some(CommunityMode::Roles { guild_id }) => self.roles_for_list(guild_id).len(),
+            Some(CommunityMode::ConfirmRoleDelete { .. }) => 2,
             // nothing to move through while it is still coming, and the
             // preview is one thing rather than a list
             _ => 0,
@@ -7232,6 +7239,58 @@ impl App {
         self.roles_for_list(&guild_id).get(view.selected).cloned()
     }
 
+    /// Whether the role under the cursor is the everyone role, which is
+    /// every member's and cannot be renamed, shown apart or deleted.
+    pub fn community_selected_role_is_everyone(&self) -> bool {
+        match (self.community_roles_guild(), self.community_selected_role()) {
+            (Some(guild_id), Some(role)) => role.id == guild_id,
+            _ => false,
+        }
+    }
+
+    /// x on a role: ask, with the cursor on "No", since every member loses
+    /// it and it does not come back. False when there is no role under the
+    /// cursor or it is the everyone role.
+    pub fn ask_role_delete(&mut self) -> bool {
+        let Some(guild_id) = self.community_roles_guild() else {
+            return false;
+        };
+        let Some(role) = self.community_selected_role() else {
+            return false;
+        };
+        if role.id == guild_id {
+            return false;
+        }
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::ConfirmRoleDelete {
+                guild_id,
+                role_id: role.id,
+                name: role.name,
+            };
+            view.selected = 1;
+        }
+        true
+    }
+
+    /// The deletion being asked about, and whether the cursor is on "Yes":
+    /// (community, role, name, yes).
+    pub fn community_role_delete_choice(&self) -> Option<(String, String, String, bool)> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::ConfirmRoleDelete {
+                guild_id,
+                role_id,
+                name,
+            } => Some((
+                guild_id.clone(),
+                role_id.clone(),
+                name.clone(),
+                view.selected == 0,
+            )),
+            _ => None,
+        }
+    }
+
     /// Step back out of a list the menu led to, or close it.
     pub fn community_back(&mut self) {
         let Some(view) = &mut self.community else {
@@ -7239,6 +7298,14 @@ impl App {
         };
         if view.input.is_some() {
             view.input = None;
+            return;
+        }
+        // out of the deletion question, back onto the list
+        if let CommunityMode::ConfirmRoleDelete { guild_id, .. } = &view.mode {
+            view.mode = CommunityMode::Roles {
+                guild_id: guild_id.clone(),
+            };
+            view.selected = 0;
             return;
         }
         if matches!(view.mode, CommunityMode::Menu) {
@@ -11199,6 +11266,36 @@ mod role_tests {
         };
         assert_eq!(action, MessageAction::GiveRole);
         assert_eq!(argument.as_deref(), Some("r2"));
+    }
+
+    /// x asks with the cursor on "No", and never about the everyone role.
+    #[test]
+    fn deleting_a_role_asks_first_and_spares_everyone() {
+        let mut app = app_with(crate::permissions::MANAGE_ROLES, vec![]);
+        app.open_communities();
+        app.open_guild_roles("g".into());
+        // the list ends with @everyone
+        app.community_move(2);
+        assert!(app.community_selected_role_is_everyone());
+        assert!(!app.ask_role_delete());
+        app.community_move(-2);
+        assert!(!app.community_selected_role_is_everyone());
+        assert!(app.ask_role_delete());
+        assert_eq!(app.community_len(), 2);
+        assert_eq!(
+            app.community_role_delete_choice()
+                .map(|(_, id, _, yes)| (id, yes)),
+            Some(("r2".to_string(), false))
+        );
+        app.community_move(-1);
+        assert!(
+            app.community_role_delete_choice()
+                .is_some_and(|(_, _, _, yes)| yes)
+        );
+        // Esc goes back onto the list rather than closing the overlay
+        app.community_back();
+        assert_eq!(app.community_len(), 3);
+        assert!(app.community_roles_guild().is_some());
     }
 
     #[test]

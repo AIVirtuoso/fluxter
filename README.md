@@ -915,8 +915,10 @@ and `·mentionable` on the ones anybody may mention.
 A new role is made with **+** and starts where the server puts it -- at
 the bottom of the hierarchy, with the permissions the everyone role has
 and nothing else. **r** renames, **h** and **m** toggle those two marks,
-**x** deletes. The everyone role is in the list because its colour and its
-permissions are real, but the server refuses to delete or reorder it.
+**x** asks and then deletes: every member loses the role and it does not
+come back, so the question starts on "No". The everyone role is in the
+list because its colour and its permissions are real, but it is every
+member's and none of those keys touch it.
 
 Giving a role to somebody is in the message menu instead, since that is
 where a person is in front of you: **Give the author a role** lists what
@@ -1024,7 +1026,7 @@ first three are always there, the last two only inside a community.
 | **Make a community** | Asks for a name and makes it. You are its owner. |
 | **Browse the directory** | The instance's discovery listing. **/** searches it, **Enter** joins straight from the list without an invite. |
 | **Invites to this community** | Every invite you may see. **y** copies its link, **+** makes one to the channel now open, **x** revokes. |
-| **Roles in this community** | Every role, highest first, each in its own colour. **+** makes one, **r** renames, **h** shows its members as their own group in the member list, **m** lets anybody mention it, **x** deletes it. Needs **Manage Roles**. |
+| **Roles in this community** | Every role, highest first, each in its own colour. **+** makes one, **r** renames, **h** shows its members as their own group in the member list, **m** lets anybody mention it, **x** deletes it after asking. Needs **Manage Roles**. |
 | **Leave this community** | Leaves it. A community you own cannot be left, and the client says so rather than sending a call the server would refuse. |
 
 ### An invite is looked up before it is taken
