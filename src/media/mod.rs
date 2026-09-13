@@ -215,7 +215,7 @@ fn embed_preview_media(embed: &MessageEmbedResponse) -> Option<MessagePreviewMed
 /// First image or video suitable for Ctrl+O (images and animations preview
 /// in-terminal; videos open externally).
 pub fn first_message_preview_media(msg: &MessageResponse) -> Option<MessagePreviewMedia> {
-    for a in &msg.attachments {
+    for a in msg.all_attachments() {
         if let Some(u) = attachment_image_url(a) {
             let label = if a.filename.is_empty() {
                 "image".to_string()
@@ -225,7 +225,7 @@ pub fn first_message_preview_media(msg: &MessageResponse) -> Option<MessagePrevi
             return Some(MessagePreviewMedia::Image { url: u, label });
         }
     }
-    for a in &msg.attachments {
+    for a in msg.all_attachments() {
         if let Some(u) = attachment_video_url(a) {
             let label = if a.filename.is_empty() {
                 "video".to_string()
@@ -235,7 +235,7 @@ pub fn first_message_preview_media(msg: &MessageResponse) -> Option<MessagePrevi
             return Some(MessagePreviewMedia::Video { url: u, label });
         }
     }
-    for a in &msg.attachments {
+    for a in msg.all_attachments() {
         if let Some(u) = attachment_audio_url(a) {
             let label = if a.filename.is_empty() {
                 "audio".to_string()
@@ -246,7 +246,7 @@ pub fn first_message_preview_media(msg: &MessageResponse) -> Option<MessagePrevi
         }
     }
 
-    msg.embeds.iter().find_map(embed_preview_media)
+    msg.all_embeds().find_map(embed_preview_media)
 }
 
 // Caught you

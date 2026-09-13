@@ -1301,6 +1301,7 @@ pub fn apply_event(
                 reactions: vec![],
                 message_reference: None,
                 referenced_message: None,
+                message_snapshots: vec![],
                 member: None,
             };
             let was_new = app.upsert_message(message.clone());

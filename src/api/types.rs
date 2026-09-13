@@ -46,6 +46,16 @@ where
     deserializer.deserialize_any(RoleColorVisitor)
 }
 
+/// A list that the server may send as `null` rather than leave out: null
+/// and absent both read as empty.
+fn deserialize_null_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 fn deserialize_snowflake_string<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -846,8 +856,95 @@ pub struct MessageResponse {
     pub message_reference: Option<MessageReferenceResponse>,
     #[serde(default)]
     pub referenced_message: Option<Box<MessageResponse>>,
+    /// The forwarded copies a FORWARD reference carries. A forward leaves
+    /// `referenced_message` unset and puts everything the reader is meant
+    /// to see here, so a client that ignores these shows an empty message.
+    /// The schema declares the field nullable, and a `null` here must not
+    /// take the whole message down with it.
+    #[serde(default, deserialize_with = "deserialize_null_vec")]
+    pub message_snapshots: Vec<MessageSnapshotResponse>,
     #[serde(default)]
     pub member: Option<GuildMemberResponse>,
+}
+
+/// One forwarded message, flattened. It has no id, channel or author of
+/// its own: the server strips those on purpose, so a forward cannot be
+/// traced back to where it came from.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Hash)]
+pub struct MessageSnapshotResponse {
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    #[serde(default)]
+    pub edited_timestamp: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<MessageAttachmentResponse>,
+    #[serde(default)]
+    pub embeds: Vec<MessageEmbedResponse>,
+    #[serde(default)]
+    pub stickers: Vec<MessageStickerResponse>,
+    #[serde(default, rename = "type")]
+    pub message_type: i32,
+    #[serde(default)]
+    pub flags: u64,
+}
+
+impl MessageResponse {
+    /// Whether the message is a forward rather than a reply: the two use
+    /// the same reference field and are told apart by its type.
+    pub fn is_forward(&self) -> bool {
+        self.message_reference
+            .as_ref()
+            .is_some_and(|r| r.reference_type == MESSAGE_REFERENCE_FORWARD)
+    }
+
+    /// The text a reader is meant to see: what the sender typed, and the
+    /// text of every forwarded copy under it. Borrowed when there is
+    /// nothing forwarded, which is every ordinary message.
+    pub fn display_content(&self) -> std::borrow::Cow<'_, str> {
+        if self.message_snapshots.iter().all(|s| s.content.is_empty()) {
+            return std::borrow::Cow::Borrowed(&self.content);
+        }
+        let mut out = self.content.trim_end().to_string();
+        for snapshot in &self.message_snapshots {
+            if snapshot.content.is_empty() {
+                continue;
+            }
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(snapshot.content.trim_end());
+        }
+        std::borrow::Cow::Owned(out)
+    }
+
+    /// Everything attached to the message, the forwarded copies included.
+    /// `attachments` alone is what the message itself owns, which is what
+    /// an attachment can be deleted from.
+    pub fn all_attachments(&self) -> impl Iterator<Item = &MessageAttachmentResponse> {
+        self.attachments.iter().chain(
+            self.message_snapshots
+                .iter()
+                .flat_map(|s| s.attachments.iter()),
+        )
+    }
+
+    /// Every sticker on the message, the forwarded copies included.
+    pub fn all_stickers(&self) -> impl Iterator<Item = &MessageStickerResponse> {
+        self.stickers.iter().chain(
+            self.message_snapshots
+                .iter()
+                .flat_map(|s| s.stickers.iter()),
+        )
+    }
+
+    /// Every embed on the message, the forwarded copies included.
+    pub fn all_embeds(&self) -> impl Iterator<Item = &MessageEmbedResponse> {
+        self.embeds
+            .iter()
+            .chain(self.message_snapshots.iter().flat_map(|s| s.embeds.iter()))
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Hash)]
@@ -1566,6 +1663,11 @@ impl RelationshipResponse {
 /// the message when it is set, which is what "suppress embeds" does.
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
 
+/// `message_reference.type`: 0 is a reply to the message it names, 1 is a
+/// forward of it, whose content arrives as `message_snapshots`.
+pub const MESSAGE_REFERENCE_REPLY: i32 = 0;
+pub const MESSAGE_REFERENCE_FORWARD: i32 = 1;
+
 /// One entry of `GET /channels/{id}/messages/pins`: the message and when
 /// it was pinned (which is not the message's own timestamp).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1890,5 +1992,25 @@ mod user_guild_settings_tests {
                 "mute_config": {"end_time": "2026-09-07T12:00:00.000Z", "selected_time_window": 900000}
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod snapshot_field_tests {
+    use super::MessageResponse;
+
+    /// The response schema marks `message_snapshots` nullable, so a null
+    /// is an ordinary message with nothing forwarded, not a decode error
+    /// that drops the message.
+    #[test]
+    fn a_null_snapshot_list_is_an_empty_one() {
+        let json = r#"{"id":"1","channel_id":"c","author":{"id":"a","username":"a"},
+            "content":"hi","timestamp":"2026-09-13T10:00:00.000Z","message_snapshots":null}"#;
+        let message: MessageResponse = serde_json::from_str(json).unwrap();
+        assert!(message.message_snapshots.is_empty());
+        let json = r#"{"id":"1","channel_id":"c","author":{"id":"a","username":"a"},
+            "content":"hi","timestamp":"2026-09-13T10:00:00.000Z"}"#;
+        let message: MessageResponse = serde_json::from_str(json).unwrap();
+        assert!(message.message_snapshots.is_empty());
     }
 }

@@ -916,6 +916,17 @@ Pins, bookmarks, bulk deletes and cleared reactions arrive over the
 gateway as well, so a change made in another client shows here without a
 reload.
 
+### A forward that arrives
+
+A forwarded message says `↪ Forwarded` above its author, and under it
+shows what was forwarded: the original's text, its files and pictures, its
+stickers and its link previews, beneath whatever note the sender typed
+above them. The server sends all of that as a flat copy with no author,
+channel or id on it, so unlike a reply -- whose `↩` row jumps to the
+message it answers -- a forward cannot be traced back to where it came
+from, and there is nothing to jump to. **y** copies what the forward
+shows, the forwarded text included.
+
 ## Searching
 
 **/** opens the search. Type the query, pick the scope with **←** and

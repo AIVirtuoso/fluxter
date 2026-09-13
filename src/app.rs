@@ -2341,21 +2341,22 @@ impl App {
             (Some(c), Some(_)) => format!("{author} in #{}", c.name),
             _ => format!("{author} (direct message)"),
         };
-        let mut body: String = crate::ui::message_markdown::content_lines(&message.content, self)
-            .iter()
-            .map(|spans| spans.iter().map(|s| s.content.as_ref()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string();
+        let mut body: String =
+            crate::ui::message_markdown::content_lines(&message.display_content(), self)
+                .iter()
+                .map(|spans| spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim()
+                .to_string();
         const MAX: usize = 300;
         if body.chars().count() > MAX {
             body = body.chars().take(MAX).collect::<String>() + "\u{2026}";
         }
-        if !message.attachments.is_empty() {
-            let n = message.attachments.len();
+        if let Some(first) = message.all_attachments().next() {
+            let n = message.all_attachments().count();
             let files = if n == 1 {
-                message.attachments[0].filename.clone()
+                first.filename.clone()
             } else {
                 format!("{n} files")
             };
@@ -2365,10 +2366,10 @@ impl App {
                 body = format!("{body} [{files}]");
             }
         }
-        if !message.stickers.is_empty() {
-            let n = message.stickers.len();
+        if let Some(first) = message.all_stickers().next() {
+            let n = message.all_stickers().count();
             let stickers = if n == 1 {
-                format!("sticker: {}", message.stickers[0].name)
+                format!("sticker: {}", first.name)
             } else {
                 format!("{n} stickers")
             };
@@ -8364,8 +8365,8 @@ impl App {
 /// reactions and embeds carry no text of their own and are left out, so
 /// a message made of nothing but a sticker copies as nothing.
 pub fn message_copy_text(msg: &MessageResponse) -> String {
-    let mut out = msg.content.trim_end().to_string();
-    for att in &msg.attachments {
+    let mut out = msg.display_content().trim_end().to_string();
+    for att in msg.all_attachments() {
         let Some(url) = att
             .url
             .as_deref()
