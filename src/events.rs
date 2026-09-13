@@ -5,9 +5,13 @@ use crate::api::types::{
     ReadyEvent, TypingStartEvent, UserGuildSettingsResponse, UserPrivateResponse,
     UserSettingsResponse, VoiceStateResponse,
 };
+
 use crate::app::{App, GatewayStatus, ImagePreviewState, ServerSelection};
+
 use image::DynamicImage;
+
 use serde_json::Value;
+
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -46,6 +50,11 @@ pub enum AppEvent {
     GuildWebhooksFailed {
         guild_id: String,
         message: String,
+    },
+    /// The account's own profile came back from a change of its own,
+    /// before the gateway's USER_UPDATE arrives.
+    OwnUserUpdated {
+        user: Box<crate::api::types::UserPrivateResponse>,
     },
     GuildChannelsLoaded {
         guild_id: String,
@@ -1249,6 +1258,9 @@ pub fn apply_event(
         }
         AppEvent::GuildWebhooksFailed { guild_id, message } => {
             app.set_guild_webhooks_failed(&guild_id, message);
+        }
+        AppEvent::OwnUserUpdated { user } => {
+            app.me = *user;
         }
         AppEvent::GuildMembersLoaded { guild_id, members } => {
             app.set_guild_members(&guild_id, members);

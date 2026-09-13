@@ -1,5 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
+
 use serde_json::Value;
+
 use std::collections::HashMap;
 
 fn deserialize_role_color<'de, D>(deserializer: D) -> Result<u32, D::Error>
@@ -154,15 +156,25 @@ where
 pub type Snowflake = String;
 
 pub const CHANNEL_GUILD_TEXT: i32 = 0;
+
 pub const CHANNEL_DM: i32 = 1;
+
 pub const CHANNEL_GUILD_VOICE: i32 = 2;
+
 pub const CHANNEL_GROUP_DM: i32 = 3;
+
 pub const CHANNEL_GUILD_CATEGORY: i32 = 4;
+
 pub const CHANNEL_GUILD_LINK: i32 = 998;
+
 pub const CHANNEL_DM_PERSONAL_NOTES: i32 = 999;
+
 pub const MESSAGE_NOTIFICATIONS_ALL_MESSAGES: i32 = 0;
+
 pub const MESSAGE_NOTIFICATIONS_ONLY_MENTIONS: i32 = 1;
+
 pub const MESSAGE_NOTIFICATIONS_NO_MESSAGES: i32 = 2;
+
 pub const MESSAGE_NOTIFICATIONS_INHERIT: i32 = 3;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -253,6 +265,40 @@ pub struct UserPrivateResponse {
     pub verified: bool,
     #[serde(default)]
     pub email: Option<String>,
+    /// The profile biography, pronouns and accent colour: part of the
+    /// account object, not only of the profile endpoint.
+    #[serde(default)]
+    pub bio: Option<String>,
+    #[serde(default)]
+    pub pronouns: Option<String>,
+    #[serde(default)]
+    pub accent_color: Option<u32>,
+    /// What happens by default when somebody replies to this account:
+    /// 0 no preference, 1 mention, 2 no mention.
+    #[serde(default)]
+    pub mention_flags: Option<i32>,
+    /// Whether any authenticator is configured on the account.
+    #[serde(default)]
+    pub mfa_enabled: bool,
+}
+
+/// The body of `PATCH /users/@me`, with the fields that need no sudo
+/// proof. `Some(None)` is the explicit null that clears one.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ModifyCurrentUserRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub global_name: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bio: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pronouns: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accent_color: Option<Option<u32>>,
+    /// A `data:<mime>;base64,<payload>` string, or null to clear it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mention_flags: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Hash)]
@@ -478,6 +524,7 @@ impl ChannelResponse {
         }
     }
 }
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Hash)]
 pub struct MessageAttachmentResponse {
     #[serde(default)]
@@ -665,7 +712,6 @@ fn lenient_i64(value: &Value) -> Option<i64> {
 // rejects the whole payload over one such field: the update looked like
 // it had failed even though the server had saved it, and a READY with a
 // saved entry in it left the client empty at the next start.
-
 fn deserialize_lenient_bool<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
     let value = Value::deserialize(d)?;
     Ok(match &value {
@@ -1664,8 +1710,11 @@ pub struct DiscoveryGuildResponse {
 
 /// The four kinds of tie between two accounts.
 pub const RELATIONSHIP_FRIEND: i32 = 1;
+
 pub const RELATIONSHIP_BLOCKED: i32 = 2;
+
 pub const RELATIONSHIP_INCOMING_REQUEST: i32 = 3;
+
 pub const RELATIONSHIP_OUTGOING_REQUEST: i32 = 4;
 
 /// One entry of `GET /users/@me/relationships`, and the payload of the
@@ -1713,7 +1762,9 @@ pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
 /// `message_reference.type`: 0 is a reply to the message it names, 1 is a
 /// forward of it, whose content arrives as `message_snapshots`.
 pub const MESSAGE_REFERENCE_REPLY: i32 = 0;
+
 pub const MESSAGE_REFERENCE_FORWARD: i32 = 1;
+
 /// Roughly where a session's address is, as the server guesses it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClientLocationResponse {
@@ -1844,6 +1895,7 @@ impl GifResponse {
         }
     }
 }
+
 /// One member the search index matched. It flattens what the member
 /// object nests under `user`, and names two fields differently: `nickname`
 /// for `nick` and `role_ids` for `roles`.
@@ -1904,6 +1956,7 @@ pub struct GuildMemberSearchResponse {
     #[serde(default)]
     pub indexing: bool,
 }
+
 /// The body of `POST /guilds/{id}/channels`. Every other field of a new
 /// channel takes its default, and a channel made inside a category
 /// inherits that category's overwrites.
@@ -1928,6 +1981,7 @@ pub struct ModifyGuildChannelRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit_per_user: Option<i64>,
 }
+
 /// One entry of `GET /guilds/{id}/bans`. The server never hands back the
 /// address or the email a ban also stores.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1964,6 +2018,7 @@ pub struct ModifyGuildMemberRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub communication_disabled_until: Option<Option<String>>,
 }
+
 /// The body of `PATCH /guilds/{id}`. Only the fields this client offers
 /// are here; an omitted one keeps what is stored.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -2006,6 +2061,7 @@ pub struct GuildAuditLogResponse {
     #[serde(default)]
     pub users: Vec<UserPartialResponse>,
 }
+
 /// One webhook: a name and picture something posts into one channel
 /// under, with the token that authorises it. The token is a bearer
 /// credential for the webhook's whole life and is never rotated, so it is
@@ -2062,6 +2118,7 @@ pub struct SavedMessageEntryResponse {
     #[serde(default)]
     pub message: Option<MessageResponse>,
 }
+
 /// What `POST /search/messages` takes. Only the fields the client sets
 /// are sent; the rest of the server's forty-odd filters are left alone.
 #[derive(Debug, Clone, Default, Serialize)]

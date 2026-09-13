@@ -1,8 +1,13 @@
 use crate::app::App;
+
 use ratatui::Frame;
+
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+
 use ratatui::style::{Modifier, Style};
+
 use ratatui::text::{Line, Span, Text};
+
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 const HELP: &str = r#"Global (almost any screen)
@@ -67,6 +72,13 @@ Finding people
   Alt+R - find a member of the open community by name, through the server's
            member index: Enter searches, u opens a profile, d starts a
            conversation. Needs one of the moderator permissions there.
+
+Yourself
+  Alt+E - your own profile: display name, about you, pronouns, accent colour,
+           picture (a path to a file), and what happens when somebody replies to
+           you. Enter changes a row, x asks and Enter clears it, Esc closes.
+  /status online|idle|dnd|invisible - your online status
+  /customstatus <text> - the line under your name (alone clears it)
 
 Servers (left column)
   Up / Down / j / k - move server selection

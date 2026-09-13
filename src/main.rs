@@ -1,51 +1,89 @@
 mod api;
+
 mod app;
+
 mod auth;
+
 mod compose;
+
 mod config;
+
 mod console;
+
 mod debug;
+
 mod emoji;
+
 mod events;
+
 mod media;
+
 mod notify;
+
 mod permissions;
+
 mod search;
+
 mod slash_commands;
+
 mod term_bg;
+
 mod ui;
 
 use crate::api::client::{ApiError, FluxerHttpClient};
+
 use crate::api::gateway::{GatewayCommand, run_gateway};
+
 use crate::api::types::MESSAGE_FLAG_SUPPRESS_EMBEDS;
+
 use crate::api::types::{CreateMessageRequest, MessageQuery, MessageReferenceRequest};
+
 use crate::api::types::{CustomStatusPayload, UserSettingsPatch};
+
 use crate::app::{
     App, Focus, FriendsInput, GatewayStatus, ImagePreviewState, MessageAction,
     MessageActionOutcome, ServerSelection, display_name, me_as_partial,
 };
+
 use crate::auth::ensure_auth;
+
 use crate::config::{AppConfig, default_config_path, load_config, save_config};
+
 use crate::events::{AppEvent, apply_event};
+
 use crate::media::StagedAttachment;
+
 use crate::media::{MessagePreviewMedia, first_message_preview_media};
+
 use anyhow::{Context, Error as AnyhowError, Result};
+
 use clap::Parser;
+
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange, Event,
     EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
+
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+
 use crossterm::{execute, terminal};
+
 use futures_util::{FutureExt, StreamExt};
+
 use ratatui::Terminal;
+
 use reqwest::StatusCode;
+
 use std::io;
+
 use std::path::{Path, PathBuf};
+
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+
 use tokio::time::Duration;
 
 fn err_is_http_status(err: &AnyhowError, want: StatusCode) -> bool {
@@ -929,6 +967,7 @@ fn handle_paste_event(
 /// at least this far apart: a burst of gateway events (presence changes
 /// in a big community, say) is drawn once instead of once per event.
 const PERF_FRAME_GAP: Duration = Duration::from_millis(200);
+
 /// The least time between two notification sounds: a burst of messages
 /// is one event, not a carillon.
 const NOTIFY_SOUND_GAP: Duration = Duration::from_millis(1500);
@@ -1201,6 +1240,7 @@ fn handle_compose_editing_key(app: &mut App, key: KeyEvent) -> bool {
         _ => false,
     }
 }
+
 fn handle_input_focus_key(
     app: &mut App,
     key: KeyEvent,
@@ -2453,6 +2493,54 @@ fn handle_key_event(
         return;
     }
 
+    if app.profile_edit.is_some() {
+        // x asked whether to clear a row: only Enter says yes, and any
+        // other key keeps what is there
+        if app.profile_edit_clear_pending().is_some() {
+            if key.code == KeyCode::Enter {
+                clear_profile_edit_row(app, client, event_tx);
+            } else {
+                app.profile_edit_keep();
+            }
+            return;
+        }
+        // typing takes the keys while the footer is asking for a value
+        if let Some(input) = app.profile_edit.as_ref().and_then(|v| v.input.clone()) {
+            match key.code {
+                KeyCode::Esc => app.profile_edit_back(),
+                KeyCode::Enter => run_profile_edit_input(app, client, event_tx, input),
+                KeyCode::Backspace => {
+                    if let Some(view) = app.profile_edit.as_mut()
+                        && let Some(input) = view.input.as_mut()
+                    {
+                        input.text_mut().pop();
+                    }
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(view) = app.profile_edit.as_mut()
+                        && let Some(input) = view.input.as_mut()
+                        && input.text().chars().count() < 320
+                    {
+                        input.text_mut().push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.profile_edit_back(),
+            KeyCode::Up | KeyCode::Char('k') => app.profile_edit_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.profile_edit_move(1),
+            KeyCode::Home => app.profile_edit_move(isize::MIN / 2),
+            KeyCode::End => app.profile_edit_move(isize::MAX / 2),
+            KeyCode::Enter => start_profile_edit_row(app, client, event_tx),
+            KeyCode::Char('x') | KeyCode::Delete => app.profile_edit_ask_clear(),
+            _ => {}
+        }
+        return;
+    }
+
     if app.pins.is_some() {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => app.dismiss_pins(),
@@ -3438,6 +3526,17 @@ fn handle_key_event(
                 app.api_backoff_clear_guild(&guild_id);
             }
         }
+        // Alt+E = your own profile. Above the plain e below, which checks
+        // no modifier and would take it whenever a message is selected.
+        KeyCode::Char('e') | KeyCode::Char('E')
+            if key.modifiers.contains(KeyModifiers::ALT)
+                && matches!(
+                    app.focus,
+                    Focus::Servers | Focus::Channels | Focus::Messages
+                ) =>
+        {
+            app.open_profile_edit();
+        }
         // e = add reaction
         KeyCode::Char('e')
             if app.focus == Focus::Messages && app.selected_message_index.is_some() =>
@@ -4377,6 +4476,225 @@ fn run_voice_action(
 
 /// Enter on the footer's text: what it does depends on what was asked
 /// for.
+/// Enter on a profile row: the text ones open the footer, the reply
+/// preference cycles on the spot.
+fn start_profile_edit_row(
+    app: &mut App,
+    client: &FluxerHttpClient,
+    event_tx: &UnboundedSender<AppEvent>,
+) {
+    use crate::app::{ProfileEditInput, ProfileEditRow};
+    let Some(row) = app.profile_edit_selected_row() else {
+        return;
+    };
+    let current = app.profile_edit_value(row);
+    match row {
+        ProfileEditRow::ReplyMentions => {
+            let flags = app.next_reply_mention_flag();
+            let label = crate::app::REPLY_MENTION_CHOICES
+                .iter()
+                .find(|(value, _)| *value == flags)
+                .map(|(_, label)| *label)
+                .unwrap_or("whatever they choose");
+            app.set_status(format!("Replies: {label}."));
+            spawn_modify_me(
+                client.clone(),
+                event_tx.clone(),
+                crate::api::types::ModifyCurrentUserRequest {
+                    mention_flags: Some(flags),
+                    ..Default::default()
+                },
+                "Saved.",
+            );
+        }
+        ProfileEditRow::Picture => {
+            if let Some(view) = app.profile_edit.as_mut() {
+                view.input = Some(ProfileEditInput::PicturePath(String::new()));
+            }
+        }
+        ProfileEditRow::DisplayName => {
+            if let Some(view) = app.profile_edit.as_mut() {
+                view.input = Some(ProfileEditInput::DisplayName(current));
+            }
+        }
+        ProfileEditRow::Bio => {
+            if let Some(view) = app.profile_edit.as_mut() {
+                view.input = Some(ProfileEditInput::Bio(current));
+            }
+        }
+        ProfileEditRow::Pronouns => {
+            if let Some(view) = app.profile_edit.as_mut() {
+                view.input = Some(ProfileEditInput::Pronouns(current));
+            }
+        }
+        ProfileEditRow::AccentColour => {
+            if let Some(view) = app.profile_edit.as_mut() {
+                view.input = Some(ProfileEditInput::AccentColour(current));
+            }
+        }
+    }
+}
+
+/// Enter after x on a profile row: the explicit null the server wants to
+/// clear it. A cleared picture or biography cannot be got back, which is
+/// why x alone only asks.
+fn clear_profile_edit_row(
+    app: &mut App,
+    client: &FluxerHttpClient,
+    event_tx: &UnboundedSender<AppEvent>,
+) {
+    use crate::api::types::ModifyCurrentUserRequest;
+    use crate::app::ProfileEditRow;
+    let Some(row) = app.profile_edit_keep() else {
+        return;
+    };
+    if !row.clearable() {
+        return;
+    }
+    let body = match row {
+        ProfileEditRow::DisplayName => ModifyCurrentUserRequest {
+            global_name: Some(None),
+            ..Default::default()
+        },
+        ProfileEditRow::Bio => ModifyCurrentUserRequest {
+            bio: Some(None),
+            ..Default::default()
+        },
+        ProfileEditRow::Pronouns => ModifyCurrentUserRequest {
+            pronouns: Some(None),
+            ..Default::default()
+        },
+        ProfileEditRow::AccentColour => ModifyCurrentUserRequest {
+            accent_color: Some(None),
+            ..Default::default()
+        },
+        ProfileEditRow::Picture => ModifyCurrentUserRequest {
+            avatar: Some(None),
+            ..Default::default()
+        },
+        ProfileEditRow::ReplyMentions => return,
+    };
+    app.set_status("Clearing…");
+    spawn_modify_me(client.clone(), event_tx.clone(), body, "Cleared.");
+}
+
+/// Enter on the profile editor's footer, once the value is typed.
+fn run_profile_edit_input(
+    app: &mut App,
+    client: &FluxerHttpClient,
+    event_tx: &UnboundedSender<AppEvent>,
+    input: crate::app::ProfileEditInput,
+) {
+    use crate::api::types::ModifyCurrentUserRequest;
+    use crate::app::ProfileEditInput;
+    if let Some(view) = app.profile_edit.as_mut() {
+        view.input = None;
+    }
+    let body = match input {
+        ProfileEditInput::DisplayName(text) => {
+            let text = text.trim().to_string();
+            ModifyCurrentUserRequest {
+                global_name: Some((!text.is_empty()).then_some(text)),
+                ..Default::default()
+            }
+        }
+        ProfileEditInput::Bio(text) => {
+            let text = text.trim().to_string();
+            ModifyCurrentUserRequest {
+                bio: Some((!text.is_empty()).then_some(text)),
+                ..Default::default()
+            }
+        }
+        ProfileEditInput::Pronouns(text) => {
+            let text = text.trim().to_string();
+            ModifyCurrentUserRequest {
+                pronouns: Some((!text.is_empty()).then_some(text)),
+                ..Default::default()
+            }
+        }
+        ProfileEditInput::AccentColour(text) => {
+            let text = text.trim().to_string();
+            if text.is_empty() {
+                ModifyCurrentUserRequest {
+                    accent_color: Some(None),
+                    ..Default::default()
+                }
+            } else {
+                let Some(colour) = parse_hex_colour(&text) else {
+                    app.set_status("A colour is six hex digits, like #3498db.");
+                    return;
+                };
+                ModifyCurrentUserRequest {
+                    accent_color: Some(Some(colour)),
+                    ..Default::default()
+                }
+            }
+        }
+        ProfileEditInput::PicturePath(text) => {
+            let path = crate::media::expand_home(text.trim());
+            match std::fs::read(&path) {
+                Ok(bytes) if bytes.is_empty() => {
+                    app.set_status("That file is empty.");
+                    return;
+                }
+                Ok(bytes) => {
+                    let uri = crate::media::data_uri_for_file(&path, &bytes);
+                    app.set_status("Sending the picture…");
+                    ModifyCurrentUserRequest {
+                        avatar: Some(Some(uri)),
+                        ..Default::default()
+                    }
+                }
+                Err(err) => {
+                    app.set_status(format!("Could not read it: {err}"));
+                    return;
+                }
+            }
+        }
+    };
+    app.set_status("Saving…");
+    spawn_modify_me(client.clone(), event_tx.clone(), body, "Saved.");
+}
+
+/// "#3498db", "3498db" or "0x3498db" as the packed integer the API takes.
+fn parse_hex_colour(text: &str) -> Option<u32> {
+    let cleaned = text
+        .trim()
+        .trim_start_matches('#')
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    if cleaned.len() != 6 || !cleaned.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(cleaned, 16).ok()
+}
+
+/// Change the account's own profile. USER_UPDATE comes back over the
+/// gateway, so nothing is applied here.
+fn spawn_modify_me(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    body: crate::api::types::ModifyCurrentUserRequest,
+    done: &str,
+) {
+    let done = done.to_string();
+    tokio::spawn(async move {
+        match client.modify_current_user(&body).await {
+            Ok(user) => {
+                let _ = event_tx.send(AppEvent::OwnUserUpdated {
+                    user: Box::new(user),
+                });
+                let _ = event_tx.send(AppEvent::SetStatus(done));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to save it: {err}")));
+            }
+        }
+    });
+}
+
+/// Enter on the footer's text: what it does depends on what was asked
+/// for.
 /// Enter on a channel-menu row: the ones that need text open the footer,
 /// the destructive one asks again, and the rest act.
 fn run_channel_admin_row(
@@ -5143,6 +5461,7 @@ fn spawn_create_channel(
         }
     });
 }
+
 /// What the keys say when the cursor is on the everyone role.
 const EVERYONE_ROLE_STAYS: &str =
     "@everyone is every member's: it cannot be renamed, shown apart or deleted.";
@@ -5166,6 +5485,7 @@ fn spawn_create_role(
         }
     });
 }
+
 fn spawn_guild_bans(
     client: FluxerHttpClient,
     event_tx: UnboundedSender<AppEvent>,
@@ -5185,6 +5505,7 @@ fn spawn_guild_bans(
         }
     });
 }
+
 fn spawn_guild_webhooks(
     client: FluxerHttpClient,
     event_tx: UnboundedSender<AppEvent>,
@@ -5227,6 +5548,7 @@ fn spawn_modify_channel(
         }
     });
 }
+
 /// Make a webhook, then read the list again so its row appears with the
 /// token the creation handed back.
 fn spawn_create_webhook(
@@ -5286,6 +5608,7 @@ fn spawn_webhook_change(
         }
     });
 }
+
 /// The server's rules for a name, so the footer can say what is wrong
 /// before the request goes: an emoji is 2 to 32 ASCII letters, digits
 /// and underscores, a sticker 2 to 30 characters of anything.
@@ -5373,6 +5696,7 @@ fn spawn_delete_channel(
         }
     });
 }
+
 fn spawn_rename_expression(
     client: FluxerHttpClient,
     event_tx: UnboundedSender<AppEvent>,
@@ -5397,6 +5721,7 @@ fn spawn_rename_expression(
         }
     });
 }
+
 fn spawn_guild_vanity(
     client: FluxerHttpClient,
     event_tx: UnboundedSender<AppEvent>,
@@ -5419,6 +5744,7 @@ fn spawn_guild_vanity(
         }
     });
 }
+
 fn spawn_delete_role(
     client: FluxerHttpClient,
     event_tx: UnboundedSender<AppEvent>,
@@ -5502,6 +5828,7 @@ fn spawn_set_vanity(
         }
     });
 }
+
 /// Lift a ban and read the list again, so the row goes without the
 /// overlay keeping a copy of its own.
 fn spawn_unban(
@@ -5556,6 +5883,7 @@ fn spawn_guild_audit_log(
         }
     });
 }
+
 async fn reload_webhooks(
     client: &FluxerHttpClient,
     event_tx: &UnboundedSender<AppEvent>,
@@ -5772,6 +6100,7 @@ fn spawn_delete_invite(
         }
     });
 }
+
 fn spawn_mentions_load(client: FluxerHttpClient, event_tx: UnboundedSender<AppEvent>) {
     tokio::spawn(async move {
         let started = Instant::now();
@@ -6427,6 +6756,7 @@ fn spawn_set_note(
         }
     });
 }
+
 /// Read the account's live sessions. Nothing here can end one: that needs
 /// the server's sudo mode, and the overlay says so.
 fn spawn_sessions_load(client: FluxerHttpClient, event_tx: UnboundedSender<AppEvent>) {
@@ -6443,6 +6773,7 @@ fn spawn_sessions_load(client: FluxerHttpClient, event_tx: UnboundedSender<AppEv
         }
     });
 }
+
 /// Search the community's member index. An index still being built comes
 /// back as an answer rather than an error, and the overlay says so.
 fn spawn_member_search(
@@ -7624,6 +7955,160 @@ mod key_tests {
         ));
         b.input_type('b');
         assert_eq!(b.input_text(), "a\nb");
+    }
+}
+
+/// The colour a profile row takes, and the one thing about it that is
+/// easy to get wrong: what counts as six hex digits.
+#[cfg(test)]
+mod colour_tests {
+    use super::parse_hex_colour;
+
+    #[test]
+    fn a_colour_is_six_hex_digits_however_it_is_prefixed() {
+        assert_eq!(parse_hex_colour("#3498db"), Some(0x3498db));
+        assert_eq!(parse_hex_colour("3498db"), Some(0x3498db));
+        assert_eq!(parse_hex_colour("0x3498DB"), Some(0x3498db));
+        assert_eq!(parse_hex_colour("  #ffffff "), Some(0xffffff));
+        assert_eq!(parse_hex_colour("#000000"), Some(0));
+    }
+
+    #[test]
+    fn anything_else_is_refused_rather_than_guessed_at() {
+        assert_eq!(parse_hex_colour(""), None);
+        assert_eq!(parse_hex_colour("#fff"), None);
+        assert_eq!(parse_hex_colour("#1234567"), None);
+        assert_eq!(parse_hex_colour("blue"), None);
+        assert_eq!(parse_hex_colour("#12345g"), None);
+    }
+}
+
+/// The profile editor's keys, pressed with a message selected: that is
+/// when the plain `e` (reaction picker) arm matches, so an Alt+E arm placed
+/// below it would never run.
+#[cfg(test)]
+mod profile_edit_key_tests {
+    use super::*;
+    use crate::api::types::{
+        CHANNEL_GUILD_TEXT, ChannelResponse, GuildResponse, MessageResponse, UserPartialResponse,
+        UserPrivateResponse,
+    };
+    use crate::app::{ProfileEditRow, ServerSelection};
+
+    struct Harness {
+        app: App,
+        client: FluxerHttpClient,
+        event_tx: UnboundedSender<AppEvent>,
+        gateway_tx: UnboundedSender<GatewayCommand>,
+        config: AppConfig,
+        path: std::path::PathBuf,
+        _events: tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+        _commands: tokio::sync::mpsc::UnboundedReceiver<GatewayCommand>,
+    }
+
+    fn harness() -> Harness {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            bio: Some("counting".into()),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: "me".into(),
+            ..Default::default()
+        };
+        let channel = ChannelResponse {
+            id: "c".into(),
+            kind: CHANNEL_GUILD_TEXT,
+            name: "general".into(),
+            guild_id: Some("g".into()),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            Default::default(),
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            Some("c".into()),
+            Default::default(),
+        );
+        app.set_guild_channels("g", vec![channel]);
+        app.upsert_message(MessageResponse {
+            id: "1".into(),
+            channel_id: "c".into(),
+            author: UserPartialResponse {
+                id: "bob".into(),
+                username: "bob".into(),
+                ..Default::default()
+            },
+            content: "hello".into(),
+            timestamp: "2026-09-13T10:00:00.000Z".into(),
+            ..Default::default()
+        });
+        app.focus = Focus::Messages;
+        app.selected_message_index = Some(0);
+        let (event_tx, _events) = tokio::sync::mpsc::unbounded_channel();
+        let (gateway_tx, _commands) = tokio::sync::mpsc::unbounded_channel();
+        Harness {
+            app,
+            client: FluxerHttpClient::new("https://example.invalid").unwrap(),
+            event_tx,
+            gateway_tx,
+            config: AppConfig::default(),
+            path: std::path::PathBuf::from("/nonexistent/config.toml"),
+            _events,
+            _commands,
+        }
+    }
+
+    fn press(h: &mut Harness, code: KeyCode, modifiers: KeyModifiers) {
+        handle_key_event(
+            &mut h.app,
+            KeyEvent::new(code, modifiers),
+            &h.client,
+            &h.event_tx,
+            &h.gateway_tx,
+            &h.path,
+            &mut h.config,
+        );
+    }
+
+    #[test]
+    fn alt_e_opens_the_editor_even_with_a_message_selected() {
+        let mut h = harness();
+        press(&mut h, KeyCode::Char('e'), KeyModifiers::ALT);
+        assert!(h.app.profile_edit.is_some());
+        assert!(h.app.reaction_target.is_none());
+    }
+
+    #[test]
+    fn plain_e_still_opens_the_reaction_picker() {
+        let mut h = harness();
+        press(&mut h, KeyCode::Char('e'), KeyModifiers::NONE);
+        assert!(h.app.profile_edit.is_none());
+        assert!(h.app.reaction_target.is_some());
+    }
+
+    /// x asks; anything but Enter keeps the row as it was.
+    #[test]
+    fn x_asks_before_clearing_and_any_other_key_keeps_it() {
+        let mut h = harness();
+        press(&mut h, KeyCode::Char('e'), KeyModifiers::ALT);
+        press(&mut h, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(h.app.profile_edit_selected_row(), Some(ProfileEditRow::Bio));
+        press(&mut h, KeyCode::Char('x'), KeyModifiers::NONE);
+        assert_eq!(
+            h.app.profile_edit_clear_pending(),
+            Some(ProfileEditRow::Bio)
+        );
+        press(&mut h, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(h.app.profile_edit_clear_pending(), None);
+        // the editor is still open and the row untouched
+        assert!(h.app.profile_edit.is_some());
+        assert_eq!(h.app.me.bio.as_deref(), Some("counting"));
     }
 }
 

@@ -1,46 +1,89 @@
 pub mod ansi_line;
+
 pub mod channel_admin;
+
 pub mod channel_picker;
+
 pub mod command_popup;
+
 pub mod community_overlay;
+
 pub mod conversation_overlay;
+
 pub mod debug_overlay;
+
 pub mod emoji_popup;
+
 pub mod file_picker;
+
 pub mod footer;
+
 pub mod friends_overlay;
+
 pub mod gif_picker;
+
 pub mod help_overlay;
+
 pub mod image_preview;
+
 pub mod input_bar;
+
 pub(crate) mod input_word_wrap;
+
 pub mod member_pane;
+
 pub mod member_search;
+
 pub mod mention_popup;
+
 pub mod message_actions;
+
 pub mod message_markdown;
+
 pub mod message_pane;
+
 pub mod pings_overlay;
+
 pub mod pins_overlay;
+
 pub mod presence;
+
+pub mod profile_edit;
+
 pub mod profile_overlay;
+
 pub mod reaction_users_overlay;
+
 pub mod saved_overlay;
+
 pub mod search_overlay;
+
 pub mod server_notifications_overlay;
+
 pub mod sessions_overlay;
+
 pub mod settings_overlay;
+
 pub mod sidebar;
+
 pub(crate) mod span_wrap;
+
 pub mod status_bar;
+
 pub mod sticker_picker;
+
 pub mod theme;
+
 pub mod voice_overlay;
 
 use crate::app::App;
+
 use ratatui::Frame;
+
 use ratatui::layout::{Constraint, Direction, Layout};
+
 use ratatui::style::Style;
+
 use ratatui::widgets::{Clear, Paragraph};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -148,6 +191,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         reaction_users_overlay::render(frame, area, app);
     } else if app.message_actions.is_some() {
         message_actions::render(frame, area, app);
+    } else if app.profile_edit.is_some() {
+        profile_edit::render(frame, area, app);
     } else if app.sessions.is_some() {
         sessions_overlay::render(frame, area, app);
     } else if app.member_search.is_some() {

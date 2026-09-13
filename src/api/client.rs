@@ -9,14 +9,23 @@ use crate::api::types::{
     UserPartialResponse, UserPrivateResponse, UserSettingsPatch, UserSettingsResponse,
     WellKnownFluxerResponse,
 };
+
 use crate::media::StagedAttachment;
+
 use anyhow::{Context, Result, anyhow, bail};
+
 use reqwest::{Method, StatusCode};
+
 use serde::Serialize;
+
 use serde::de::DeserializeOwned;
+
 use serde_json::Value;
+
 use thiserror::Error;
+
 use tokio::time::{Duration, sleep};
+
 use urlencoding;
 
 #[derive(Debug, Error)]
@@ -152,6 +161,17 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// Change the account's own profile. Only the fields that need no
+    /// sudo proof are sent from here; a username, a password or an email
+    /// change would need one, and this client holds neither.
+    pub async fn modify_current_user(
+        &self,
+        body: &crate::api::types::ModifyCurrentUserRequest,
+    ) -> Result<UserPrivateResponse> {
+        self.send_json(Method::PATCH, "/users/@me", None::<&()>, Some(body), false)
+            .await
+    }
+
     /// Write the private note about somebody, or clear it with None. The
     /// note is the reader's own and nobody else ever sees it.
     pub async fn set_user_note(&self, target_id: &str, note: Option<&str>) -> Result<()> {
@@ -167,6 +187,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     /// Every live sign-in of the account, newest activity first. Ending
     /// one needs the server's sudo mode, which this client cannot give,
     /// so this is a read.
@@ -1145,6 +1166,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     /// Take a member out of a community. Needs KICK_MEMBERS and standing
     /// over them; the owner and the caller come back as UNKNOWN_MEMBER.
     pub async fn kick_member(&self, guild_id: &str, user_id: &str) -> Result<()> {
@@ -1169,6 +1191,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     /// Ban an account from a community. Banning one that is already
     /// banned replaces the record rather than failing.
     pub async fn ban_member(
@@ -1185,6 +1208,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     /// Change a community's settings. Only the name is sent from here;
     /// needs MANAGE_GUILD.
     pub async fn modify_guild(
@@ -1218,6 +1242,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     /// Search a community's member index. Needs membership and one of the
     /// moderator permissions; an ordinary member gets 403 whatever they
     /// search for. A community whose index is still being built answers
@@ -1246,6 +1271,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     /// Add an emoji from an image. `image` takes a data URI or bare
     /// base64, at most 512 KB decoded by default.
     pub async fn create_guild_emoji(
@@ -1268,6 +1294,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     pub async fn unban_member(&self, guild_id: &str, user_id: &str) -> Result<()> {
         self.send_empty::<()>(
             Method::DELETE,
@@ -1293,6 +1320,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     /// The community's custom invite code, and how many joined through it.
     pub async fn guild_vanity_url(
         &self,
@@ -1307,6 +1335,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     /// Every webhook of a community, whichever channel each posts into.
     /// Needs MANAGE_WEBHOOKS.
     pub async fn guild_webhooks(
@@ -1378,6 +1407,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     /// Make a role. With no permissions given the server copies the
     /// everyone role's, and the new role lands at the bottom of the
     /// hierarchy.
@@ -1399,6 +1429,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     pub async fn delete_guild_emoji(&self, guild_id: &str, emoji_id: &str) -> Result<()> {
         self.send_empty::<()>(
             Method::DELETE,
@@ -1452,6 +1483,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     /// Change a role. An omitted field keeps what is stored; a caller who
     /// does not own the community cannot grant a permission they lack.
     pub async fn modify_guild_role(
@@ -1469,6 +1501,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     pub async fn rename_webhook(&self, webhook_id: &str, name: &str) -> Result<()> {
         #[derive(Serialize)]
         struct Body<'a> {
@@ -1515,6 +1548,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     pub async fn delete_webhook(&self, webhook_id: &str) -> Result<()> {
         self.send_empty::<()>(
             Method::DELETE,
@@ -1544,6 +1578,7 @@ impl FluxerHttpClient {
         )
         .await
     }
+
     pub async fn delete_guild_sticker(&self, guild_id: &str, sticker_id: &str) -> Result<()> {
         self.send_empty::<()>(
             Method::DELETE,
@@ -2035,6 +2070,7 @@ impl FluxerHttpClient {
         }
         Ok(())
     }
+
     pub async fn handoff_initiate(&self) -> Result<HandoffInitiateResponse> {
         self.send_json::<(), (), HandoffInitiateResponse>(
             Method::POST,

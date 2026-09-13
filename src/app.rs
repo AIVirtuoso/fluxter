@@ -1,9 +1,15 @@
 use image::DynamicImage;
+
 use ratatui::layout::Rect;
+
 use ratatui::style::{Color, Style};
+
 use ratatui::text::{Line, Span};
+
 use ratatui_image::picker::Picker;
+
 use ratatui_image::protocol::{Protocol, StatefulProtocol};
+
 use std::cell::RefCell;
 
 use crate::api::types::{
@@ -17,14 +23,19 @@ use crate::api::types::{
     UserPrivateResponse, UserSettingsResponse, VoiceStateResponse, WellKnownFluxerResponse,
     merge_user_cache, snowflake_sort_key,
 };
+
 use crate::api::types::{
     CustomStatusPayload, GuildMemberListUpdateEvent, PresenceRecord, PresenceStatus,
     RELATIONSHIP_BLOCKED, RELATIONSHIP_FRIEND, RELATIONSHIP_INCOMING_REQUEST,
     RELATIONSHIP_OUTGOING_REQUEST, RelationshipResponse,
 };
+
 use crate::api::types::{DiscoveryGuildResponse, GuildBanResponse, InviteResponse};
+
 use crate::config::UiSettings;
+
 use std::collections::{HashMap, HashSet};
+
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,10 +156,13 @@ pub struct CommandAutocomplete {
 }
 
 pub const MAX_ATTACHMENTS_PER_MESSAGE: usize = 10;
+
 /// What the API accepts on one message.
 pub const MAX_STICKERS_PER_MESSAGE: usize = 3;
+
 /// The media proxy clamps a sticker request into this size class.
 pub const STICKER_MIN_PX: u32 = 128;
+
 pub const STICKER_MAX_PX: u32 = 512;
 
 /// A sticker staged in the compose box, sent with the next message.
@@ -193,6 +207,7 @@ impl StickerPicker {
 
 /// Width in cells of an inline custom emoji (one row tall).
 pub const CUSTOM_EMOJI_CELLS: u16 = 2;
+
 /// Two braille blanks: not whitespace, so wrapping never trims them, and
 /// invisible if the picture fails to land on top.
 pub const CUSTOM_EMOJI_PLACEHOLDER: &str = "\u{2800}\u{2800}";
@@ -1085,6 +1100,7 @@ pub enum BansState {
     Ready(Vec<GuildBanResponse>),
     Failed(String),
 }
+
 #[derive(Debug, Clone)]
 pub enum VanityState {
     Loading,
@@ -1098,6 +1114,7 @@ pub enum AuditLogState {
     Ready(Box<crate::api::types::GuildAuditLogResponse>),
     Failed(String),
 }
+
 #[derive(Debug, Clone)]
 pub enum WebhooksState {
     Loading,
@@ -1423,6 +1440,106 @@ pub struct MessageActionsView {
     pub selected: usize,
 }
 
+/// Your own profile, as a list of the things that can be changed without
+/// the server's sudo mode: Alt+E.
+#[derive(Debug)]
+pub struct ProfileEditView {
+    pub selected: usize,
+    pub input: Option<ProfileEditInput>,
+    /// The row x asked to clear, until Enter clears it or any other key
+    /// keeps it.
+    pub confirm_clear: Option<ProfileEditRow>,
+}
+
+/// One row of the profile editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileEditRow {
+    DisplayName,
+    Bio,
+    Pronouns,
+    AccentColour,
+    Picture,
+    ReplyMentions,
+}
+
+pub const PROFILE_EDIT_ROWS: [ProfileEditRow; 6] = [
+    ProfileEditRow::DisplayName,
+    ProfileEditRow::Bio,
+    ProfileEditRow::Pronouns,
+    ProfileEditRow::AccentColour,
+    ProfileEditRow::Picture,
+    ProfileEditRow::ReplyMentions,
+];
+
+impl ProfileEditRow {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DisplayName => "Display name",
+            Self::Bio => "About you",
+            Self::Pronouns => "Pronouns",
+            Self::AccentColour => "Accent colour",
+            Self::Picture => "Picture",
+            Self::ReplyMentions => "When somebody replies to you",
+        }
+    }
+
+    /// Whether x clears the row. The reply preference has no empty state,
+    /// and a picture is cleared rather than emptied.
+    pub fn clearable(self) -> bool {
+        !matches!(self, Self::ReplyMentions)
+    }
+}
+
+/// What the editor's footer is asking for.
+#[derive(Debug, Clone)]
+pub enum ProfileEditInput {
+    DisplayName(String),
+    Bio(String),
+    Pronouns(String),
+    AccentColour(String),
+    PicturePath(String),
+}
+
+impl ProfileEditInput {
+    pub fn text(&self) -> &str {
+        match self {
+            Self::DisplayName(t)
+            | Self::Bio(t)
+            | Self::Pronouns(t)
+            | Self::AccentColour(t)
+            | Self::PicturePath(t) => t,
+        }
+    }
+
+    pub fn text_mut(&mut self) -> &mut String {
+        match self {
+            Self::DisplayName(t)
+            | Self::Bio(t)
+            | Self::Pronouns(t)
+            | Self::AccentColour(t)
+            | Self::PicturePath(t) => t,
+        }
+    }
+
+    pub fn prompt(&self) -> &'static str {
+        match self {
+            Self::DisplayName(_) => "Display name (empty clears it)",
+            Self::Bio(_) => "About you (empty clears it)",
+            Self::Pronouns(_) => "Pronouns (empty clears it)",
+            Self::AccentColour(_) => "Colour as #rrggbb (empty clears it)",
+            Self::PicturePath(_) => "Path to a picture",
+        }
+    }
+}
+
+/// The reply preferences in the order the row cycles them, with the
+/// wording each gets.
+pub const REPLY_MENTION_CHOICES: [(i32, &str); 3] = [
+    (0, "whatever they choose"),
+    (1, "mention me by default"),
+    (2, "do not mention me by default"),
+];
+
 /// Where the account is signed in: Alt+Z, a read of the server's session
 /// list. Ending one needs sudo mode, which this client cannot give, so
 /// the overlay says where to do that instead of offering a key that fails.
@@ -1502,6 +1619,7 @@ pub enum MemberSearchState {
     Indexing,
     Failed(String),
 }
+
 /// Looking after one community channel: the same list-and-cursor shape as
 /// the message menu, opened with `a` on the channel list.
 #[derive(Debug)]
@@ -1611,6 +1729,7 @@ impl ChannelAdminInput {
         }
     }
 }
+
 /// What an audit log action was, in words. The numbers are the server's
 /// `action_type`; an unknown one is shown as itself rather than hidden,
 /// since a new action is a thing the reader still wants to see.
@@ -1930,6 +2049,7 @@ pub struct Candidate {
     /// Where the client knows them from, for the row's second column.
     pub note: String,
 }
+
 #[derive(Debug)]
 pub struct ProfileView {
     pub user_id: String,
@@ -1975,6 +2095,7 @@ impl FilePicker {
 
 /// Size of a staged picture's thumbnail in the compose box, in cells.
 pub const THUMB_COLS: u16 = 16;
+
 pub const THUMB_ROWS: u16 = 4;
 
 #[derive(Debug)]
@@ -2083,6 +2204,8 @@ pub struct App {
     pub relationships_version: u64,
     /// The message actions menu while it is open.
     pub message_actions: Option<MessageActionsView>,
+    /// Your own profile, while it is being edited.
+    pub profile_edit: Option<ProfileEditView>,
     /// The reader's private notes, by the id of whoever each is about.
     /// READY carries the record and USER_NOTE_UPDATE keeps it current.
     pub notes: HashMap<String, String>,
@@ -2267,6 +2390,7 @@ pub struct App {
 
 impl App {
     const DM_SETTINGS_KEY: &'static str = "@me";
+
     const SERVER_MUTE_PRESET_MS: [u64; 5] = [
         15 * 60 * 1000,
         60 * 60 * 1000,
@@ -2349,6 +2473,7 @@ impl App {
             relationships: HashMap::new(),
             relationships_version: 0,
             message_actions: None,
+            profile_edit: None,
             notes: HashMap::new(),
             sessions: None,
             gif_picker: None,
@@ -2450,8 +2575,11 @@ impl App {
     }
 
     pub const UI_SETTINGS_LAST_ROW: usize = 8;
+
     pub const SERVER_NOTIFICATION_LAST_ROW: usize = 5;
+
     pub const HISTORY_AUTOLOAD_THRESHOLD_ROWS: u16 = 3;
+
     pub const TRANSIENT_STATUS_DURATION: Duration = Duration::from_millis(1800);
 
     fn user_guild_settings_key(guild_id: Option<&str>) -> String {
@@ -4228,9 +4356,12 @@ impl App {
 
     /// How many pings are asked for; the server allows up to 100.
     pub const PINGS_LIMIT: u32 = 50;
+
     /// A channel's pins: the server caps a page at 50.
     pub const PINS_LIMIT: u32 = 50;
+
     pub const SAVED_LIMIT: u32 = 100;
+
     pub const REACTION_USERS_LIMIT: u32 = 100;
 
     /// Open the pings overlay, empty until the list arrives.
@@ -5630,6 +5761,7 @@ impl App {
         members.sort();
         members
     }
+
     pub fn start_emoji_autocomplete(&mut self) {
         self.emoji_autocomplete = Some(EmojiAutocomplete {
             matches: Vec::new(),
@@ -5749,7 +5881,6 @@ impl App {
     }
 
     // rs
-
     pub fn set_read_states(&mut self, states: Vec<ReadStateResponse>) {
         for s in states {
             if !s.id.is_empty() {
@@ -5846,7 +5977,6 @@ impl App {
     }
 
     // ms
-
     pub fn move_selected_message(&mut self, delta: i32) {
         let count = self.active_messages().len();
         if count == 0 {
@@ -5908,7 +6038,6 @@ impl App {
     }
 
     // presence
-
     /// Somebody's online state. An account the server has said nothing
     /// about is offline: it only sends presences for people the reader
     /// shares a community or a conversation with.
@@ -6004,7 +6133,6 @@ impl App {
     }
 
     // Alt+M: the member list
-
     /// How many rows the list asks for at a time. The server takes at
     /// most a hundred per window, which is more than any terminal shows.
     pub const MEMBER_LIST_WINDOW: u32 = 100;
@@ -6177,8 +6305,8 @@ impl App {
             list.scroll = list.scroll.saturating_add_signed(delta as i16);
         }
     }
-    // Alt+F: friends, requests and blocked accounts
 
+    // Alt+F: friends, requests and blocked accounts
     pub fn open_friends(&mut self) {
         self.close_conversation_overlays();
         self.friends = Some(FriendsView {
@@ -6196,7 +6324,6 @@ impl App {
     }
 
     // Alt+N: starting a conversation, and looking after one
-
     pub fn open_new_conversation(&mut self) {
         self.close_conversation_overlays();
         self.conversation = Some(ConversationView {
@@ -6240,7 +6367,6 @@ impl App {
     }
 
     // Alt+C: joining, making and leaving communities
-
     pub fn open_communities(&mut self) {
         self.close_overlays();
         self.community = Some(CommunityView {
@@ -6601,7 +6727,6 @@ impl App {
     }
 
     // a (as in actions): the message actions menu
-
     /// Which rows the menu offers for a message. Order follows the web
     /// client's menu: reactions, then the things that write a message,
     /// then the ones that only move it about, then the destructive ones.
@@ -6784,6 +6909,7 @@ impl App {
             .parse::<chrono::DateTime<chrono::Utc>>()
             .is_ok_and(|t| t > chrono::Utc::now())
     }
+
     /// The roles a member holds, the everyone role left out.
     pub fn member_role_ids(&self, guild_id: &str, user_id: &str) -> Vec<String> {
         self.guild_members
@@ -6858,8 +6984,105 @@ impl App {
         out
     }
 
-    // Alt+Z: where the account is signed in
+    // Alt+E: your own profile
+    pub fn open_profile_edit(&mut self) {
+        self.close_overlays();
+        self.profile_edit = Some(ProfileEditView {
+            selected: 0,
+            input: None,
+            confirm_clear: None,
+        });
+    }
 
+    /// x on a row that can be cleared: ask, rather than clear. A picture
+    /// or a biography that is gone cannot be got back.
+    pub fn profile_edit_ask_clear(&mut self) {
+        let Some(row) = self.profile_edit_selected_row() else {
+            return;
+        };
+        if !row.clearable() {
+            return;
+        }
+        if let Some(view) = self.profile_edit.as_mut() {
+            view.confirm_clear = Some(row);
+        }
+    }
+
+    /// The row x asked to clear, while the question is open.
+    pub fn profile_edit_clear_pending(&self) -> Option<ProfileEditRow> {
+        self.profile_edit.as_ref()?.confirm_clear
+    }
+
+    /// Close the question, handing back the row it was about.
+    pub fn profile_edit_keep(&mut self) -> Option<ProfileEditRow> {
+        self.profile_edit.as_mut()?.confirm_clear.take()
+    }
+
+    /// Esc: out of the typing first, then out of the overlay.
+    pub fn profile_edit_back(&mut self) {
+        let Some(view) = &mut self.profile_edit else {
+            return;
+        };
+        if view.confirm_clear.take().is_some() {
+            return;
+        }
+        if view.input.is_some() {
+            view.input = None;
+        } else {
+            self.profile_edit = None;
+        }
+    }
+
+    pub fn profile_edit_move(&mut self, delta: isize) {
+        let count = PROFILE_EDIT_ROWS.len();
+        if let Some(view) = &mut self.profile_edit {
+            view.selected = (view.selected as isize + delta).clamp(0, count as isize - 1) as usize;
+        }
+    }
+
+    pub fn profile_edit_selected_row(&self) -> Option<ProfileEditRow> {
+        let view = self.profile_edit.as_ref()?;
+        PROFILE_EDIT_ROWS.get(view.selected).copied()
+    }
+
+    /// What a row holds now, for the list and for the editor to start from.
+    pub fn profile_edit_value(&self, row: ProfileEditRow) -> String {
+        match row {
+            ProfileEditRow::DisplayName => self.me.global_name.clone().unwrap_or_default(),
+            ProfileEditRow::Bio => self.me.bio.clone().unwrap_or_default(),
+            ProfileEditRow::Pronouns => self.me.pronouns.clone().unwrap_or_default(),
+            ProfileEditRow::AccentColour => self
+                .me
+                .accent_color
+                .map(|c| format!("#{c:06x}"))
+                .unwrap_or_default(),
+            ProfileEditRow::Picture => match self.me.avatar.as_deref() {
+                Some(hash) if !hash.is_empty() => "set".to_string(),
+                _ => String::new(),
+            },
+            ProfileEditRow::ReplyMentions => {
+                let flags = self.me.mention_flags.unwrap_or(0);
+                REPLY_MENTION_CHOICES
+                    .iter()
+                    .find(|(value, _)| *value == flags)
+                    .map(|(_, label)| (*label).to_string())
+                    .unwrap_or_else(|| "whatever they choose".to_string())
+            }
+        }
+    }
+
+    /// The next reply preference in the cycle, which is what Enter does on
+    /// that row.
+    pub fn next_reply_mention_flag(&self) -> i32 {
+        let current = self.me.mention_flags.unwrap_or(0);
+        let index = REPLY_MENTION_CHOICES
+            .iter()
+            .position(|(value, _)| *value == current)
+            .unwrap_or(0);
+        REPLY_MENTION_CHOICES[(index + 1) % REPLY_MENTION_CHOICES.len()].0
+    }
+
+    // Alt+Z: where the account is signed in
     pub fn open_sessions(&mut self) {
         self.close_overlays();
         self.sessions = Some(SessionsView {
@@ -6867,6 +7090,7 @@ impl App {
             selected: 0,
         });
     }
+
     /// The reader's permissions in a community, before any channel's
     /// overwrites: what a guild-level check reads.
     pub fn guild_permissions(&self, guild_id: &str) -> u64 {
@@ -6915,8 +7139,8 @@ impl App {
         });
         true
     }
-    // `/gif`: picking a GIF to send
 
+    // `/gif`: picking a GIF to send
     /// How many rows tall a GIF's preview may be. A picker row is a few
     /// cells; bigger would hide the list it belongs to.
     pub const GIF_PREVIEW_ROWS: u16 = 6;
@@ -6940,6 +7164,7 @@ impl App {
             view.selected = 0;
         }
     }
+
     pub fn dismiss_gif_picker(&mut self) {
         self.gif_picker = None;
     }
@@ -6965,6 +7190,7 @@ impl App {
             _ => 0,
         }
     }
+
     pub fn set_gifs_failed(&mut self, query: &str, message: String) {
         if let Some(view) = &mut self.gif_picker
             && view.query.trim() == query.trim()
@@ -6979,8 +7205,8 @@ impl App {
             _ => 0,
         }
     }
-    // Alt+R: finding a member of the open community
 
+    // Alt+R: finding a member of the open community
     /// Whether the member index is open to the reader. The server gates it
     /// behind any one of the moderator permissions, so an ordinary member
     /// is told that here rather than by a 403.
@@ -7032,6 +7258,7 @@ impl App {
             };
         }
     }
+
     pub fn gif_picker_move(&mut self, delta: isize) {
         let count = self.gif_picker_len();
         if let Some(view) = &mut self.gif_picker {
@@ -7042,6 +7269,7 @@ impl App {
             };
         }
     }
+
     pub fn member_search_move(&mut self, delta: isize) {
         let count = self.member_search_len();
         if let Some(view) = &mut self.member_search {
@@ -7060,6 +7288,7 @@ impl App {
             _ => None,
         }
     }
+
     pub fn member_search_selected(&self) -> Option<crate::api::types::GuildMemberSearchResult> {
         let view = self.member_search.as_ref()?;
         match &view.state {
@@ -7091,6 +7320,7 @@ impl App {
             MediaKind::Picture,
         ))
     }
+
     /// Mark the search as running, and give back what to search for.
     pub fn member_search_start(&mut self) -> Option<(String, String)> {
         let view = self.member_search.as_mut()?;
@@ -7115,8 +7345,8 @@ impl App {
             view.selected = 0;
         }
     }
-    // `a` on the channel list: looking after one community channel
 
+    // `a` on the channel list: looking after one community channel
     /// Whether the reader can make, change and delete channels in a
     /// community. MANAGE_CHANNELS is a guild-level permission for making
     /// one and a channel-level permission for changing one, so the menu
@@ -7236,6 +7466,7 @@ impl App {
     pub fn dismiss_channel_admin(&mut self) {
         self.channel_admin = None;
     }
+
     /// A community's roles, highest first, with the everyone role last:
     /// the order the web client lists them in.
     pub fn roles_for_list(&self, guild_id: &str) -> Vec<crate::api::types::GuildRoleResponse> {
@@ -7467,6 +7698,7 @@ impl App {
             view.selected = view.selected.min(count.saturating_sub(1));
         }
     }
+
     /// Open a channel the client already knows, the way the channel
     /// picker does.
     pub fn jump_to_channel(&mut self, channel_id: &str) -> bool {
@@ -7673,6 +7905,7 @@ impl App {
         self.channel_picker = None;
         self.pings = None;
         self.message_actions = None;
+        self.profile_edit = None;
         self.sessions = None;
         self.gif_picker = None;
         self.member_search = None;
@@ -7689,7 +7922,6 @@ impl App {
     }
 
     // Alt+V: voice
-
     pub fn open_voice_menu(&mut self) {
         self.close_overlays();
         self.voice_menu = Some(VoiceView { selected: 0 });
@@ -7700,7 +7932,6 @@ impl App {
     }
 
     // Alt+P: the channel's pinned messages
-
     pub fn open_pins(&mut self, channel_id: String) {
         self.close_overlays();
         self.channels_with_new_pins.remove(&channel_id);
@@ -7763,7 +7994,6 @@ impl App {
     }
 
     // Alt+B: the messages bookmarked from anywhere
-
     pub fn open_saved(&mut self) {
         self.close_overlays();
         self.saved = Some(SavedView {
@@ -7841,7 +8071,6 @@ impl App {
     }
 
     // v: who reacted
-
     /// Open the who-reacted list on one of a message's reactions. The
     /// index walks the message's own reaction order.
     pub fn open_reaction_users(
@@ -7945,6 +8174,7 @@ impl App {
             })
             .map(|c| c.id.clone())
     }
+
     /// Set or clear a message's suppress-embeds flag in the loaded copy,
     /// so the pane follows before the gateway says so.
     pub fn set_local_message_flags(&mut self, channel_id: &str, message_id: &str, flags: u64) {
@@ -7972,8 +8202,8 @@ impl App {
         }
         self.messages_version = self.messages_version.wrapping_add(1);
     }
-    // / : search
 
+    // / : search
     pub fn open_search(&mut self) {
         self.show_settings = false;
         self.show_server_notifications = false;
@@ -8191,6 +8421,7 @@ impl App {
             ),
         }
     }
+
     /// Take a channel the server just made and put it on the list, so the
     /// reader can be moved into it at once.
     pub fn adopt_private_channel(&mut self, channel: ChannelResponse) {
@@ -8244,6 +8475,7 @@ impl App {
             }
         }
     }
+
     pub fn community_selected_guild(&self) -> Option<DiscoveryGuildResponse> {
         let view = self.community.as_ref()?;
         match &view.mode {
@@ -8272,6 +8504,7 @@ impl App {
             view.selected = 0;
         }
     }
+
     pub fn open_guild_roles(&mut self, guild_id: String) {
         if let Some(view) = &mut self.community {
             view.mode = CommunityMode::Roles { guild_id };
@@ -8291,6 +8524,7 @@ impl App {
             _ => None,
         }
     }
+
     /// The community whose roles are on screen.
     pub fn community_roles_guild(&self) -> Option<String> {
         let view = self.community.as_ref()?;
@@ -8299,6 +8533,7 @@ impl App {
             _ => None,
         }
     }
+
     pub fn open_guild_vanity(&mut self, guild_id: String) {
         if let Some(view) = &mut self.community {
             view.mode = CommunityMode::Vanity {
@@ -8308,6 +8543,7 @@ impl App {
             view.selected = 0;
         }
     }
+
     pub fn open_guild_webhooks(&mut self, guild_id: String) {
         if let Some(view) = &mut self.community {
             view.mode = CommunityMode::Webhooks {
@@ -8348,6 +8584,7 @@ impl App {
             _ => None,
         }
     }
+
     pub fn set_guild_webhooks(
         &mut self,
         for_guild: &str,
@@ -8391,6 +8628,7 @@ impl App {
             _ => None,
         }
     }
+
     pub fn community_selected_webhook(&self) -> Option<crate::api::types::WebhookResponse> {
         let view = self.community.as_ref()?;
         match &view.mode {
@@ -8440,6 +8678,7 @@ impl App {
         }
         true
     }
+
     /// x on a webhook: ask, with the cursor on "No", since deleting it is
     /// the one way its address is ever revoked. False when there is no
     /// webhook under the cursor.
@@ -8488,6 +8727,7 @@ impl App {
             _ => None,
         }
     }
+
     /// (community, webhook, name, yes).
     pub fn community_webhook_delete_choice(&self) -> Option<(String, String, String, bool)> {
         let view = self.community.as_ref()?;
@@ -8506,6 +8746,7 @@ impl App {
             _ => None,
         }
     }
+
     pub fn open_guild_audit_log(&mut self, guild_id: String) {
         if let Some(view) = &mut self.community {
             view.mode = CommunityMode::AuditLog {
@@ -8559,6 +8800,7 @@ impl App {
             format!("{base}/webhooks/{webhook_id}/{token}")
         }
     }
+
     pub fn open_guild_expressions(&mut self, guild_id: String, stickers: bool) {
         if let Some(view) = &mut self.community {
             view.mode = CommunityMode::Expressions { guild_id, stickers };
@@ -9064,8 +9306,8 @@ impl App {
         }
         Some(format!("in {name}{what}"))
     }
-    // Getting about: slots, history, the last community
 
+    // Getting about: slots, history, the last community
     /// How many channels back Alt+Left can walk.
     pub const CHANNEL_HISTORY_MAX: usize = 50;
 
@@ -9224,7 +9466,6 @@ impl App {
     }
 
     // The "new messages" line
-
     /// Fix where the line goes for a channel the reader has just opened:
     /// after the last message they had read. Nothing unread means no
     /// line, and a channel never opened before gets none either, since a
@@ -9311,7 +9552,6 @@ impl App {
     }
 
     // r (as in reply)
-
     pub fn start_reply(&mut self) {
         if let Some(msg) = self.selected_message() {
             self.edit_target = None;
@@ -9535,7 +9775,6 @@ impl App {
     }
 
     // ma
-
     pub fn start_mention_autocomplete(&mut self) {
         let pool = self.build_mention_pool();
         if pool.is_empty() {
@@ -9573,6 +9812,7 @@ impl App {
     }
 
     const MENTION_FILTER_CAP: usize = 400;
+
     const MENTION_INITIAL_CAP: usize = 80;
 
     fn build_mention_pool(&self) -> Vec<MentionPick> {
@@ -10012,7 +10252,6 @@ impl App {
     }
 
     // permission(orn) helpers
-
     pub fn can_react_in_active_channel(&self) -> bool {
         self.active_channel_permissions() & crate::permissions::ADD_REACTIONS != 0
     }
