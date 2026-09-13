@@ -59,6 +59,11 @@ Focus & navigation
            [media] voice_command, and the menu says plainly when there is none
            (see README, "Voice").
 
+Finding people
+  Alt+R - find a member of the open community by name, through the server's
+           member index: Enter searches, u opens a profile, d starts a
+           conversation. Needs one of the moderator permissions there.
+
 Servers (left column)
   Up / Down / j / k - move server selection
   n - notification settings for the selected community

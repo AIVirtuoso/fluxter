@@ -1566,6 +1566,67 @@ impl RelationshipResponse {
 /// the message when it is set, which is what "suppress embeds" does.
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
 
+/// One member the search index matched. It flattens what the member
+/// object nests under `user`, and names two fields differently: `nickname`
+/// for `nick` and `role_ids` for `roles`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GuildMemberSearchResult {
+    #[serde(default, deserialize_with = "deserialize_snowflake_string")]
+    pub user_id: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub discriminator: String,
+    #[serde(default)]
+    pub global_name: Option<String>,
+    #[serde(default)]
+    pub nickname: Option<String>,
+    #[serde(default)]
+    pub role_ids: Vec<String>,
+    /// Unix seconds, not the ISO 8601 the member object uses.
+    #[serde(default)]
+    pub joined_at: i64,
+    #[serde(default)]
+    pub is_bot: bool,
+}
+
+impl GuildMemberSearchResult {
+    /// The account as the rest of the client handles one, so a result can
+    /// go to the profile overlay or a direct message.
+    pub fn as_partial_user(&self) -> UserPartialResponse {
+        UserPartialResponse {
+            id: self.user_id.clone(),
+            username: self.username.clone(),
+            discriminator: self.discriminator.clone(),
+            global_name: self.global_name.clone(),
+            bot: self.is_bot,
+            ..Default::default()
+        }
+    }
+
+    /// What to call them here: the nickname, else the display name, else
+    /// the username.
+    pub fn shown_name(&self) -> String {
+        self.nickname
+            .clone()
+            .filter(|n| !n.is_empty())
+            .or_else(|| self.global_name.clone().filter(|n| !n.is_empty()))
+            .unwrap_or_else(|| self.username.clone())
+    }
+}
+
+/// The envelope one member search returns. `indexing` is an answer, not an
+/// error: the index is still being built and no result can be had yet.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GuildMemberSearchResponse {
+    #[serde(default)]
+    pub members: Vec<GuildMemberSearchResult>,
+    #[serde(default)]
+    pub total_result_count: i64,
+    #[serde(default)]
+    pub indexing: bool,
+}
+
 /// One entry of `GET /channels/{id}/messages/pins`: the message and when
 /// it was pinned (which is not the message's own timestamp).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

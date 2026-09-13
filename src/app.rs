@@ -1236,6 +1236,29 @@ pub struct MessageActionsView {
     pub selected: usize,
 }
 
+/// Finding a member of a community by name, through the server's own
+/// member index: Alt+R.
+#[derive(Debug)]
+pub struct MemberSearchView {
+    pub guild_id: String,
+    /// What is being typed, which is also what was searched for.
+    pub query: String,
+    pub state: MemberSearchState,
+    pub selected: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum MemberSearchState {
+    /// Nothing searched for yet.
+    Idle,
+    Running,
+    Ready(Vec<crate::api::types::GuildMemberSearchResult>),
+    /// The community's index is still being built: an answer, not a
+    /// failure.
+    Indexing,
+    Failed(String),
+}
+
 /// The categories `POST /reports/message` takes, with the wording the web
 /// client puts on them.
 pub const REPORT_CATEGORIES: [(&str, &str); 12] = [
@@ -1639,6 +1662,8 @@ pub struct App {
     pub relationships_version: u64,
     /// The message actions menu while it is open.
     pub message_actions: Option<MessageActionsView>,
+    /// Finding a member, while the overlay is open.
+    pub member_search: Option<MemberSearchView>,
     /// The pinned-messages overlay while it is open.
     pub pins: Option<PinsView>,
     /// The bookmarked-messages overlay while it is open.
@@ -1894,6 +1919,7 @@ impl App {
             relationships: HashMap::new(),
             relationships_version: 0,
             message_actions: None,
+            member_search: None,
             pins: None,
             saved: None,
             reaction_users: None,
@@ -3714,6 +3740,25 @@ impl App {
         self.dismiss_image_preview();
         self.debug_scroll = u16::MAX;
         self.show_debug = true;
+    }
+
+    /// Open the profile popup for anybody the client can name: used by the
+    /// member finder, where the person has no message on the screen.
+    pub fn open_profile_of_user(
+        &mut self,
+        user: UserPartialResponse,
+        guild_id: Option<String>,
+    ) -> (String, Option<String>) {
+        let user_id = user.id.clone();
+        self.close_overlays();
+        self.profile = Some(ProfileView {
+            user_id: user_id.clone(),
+            guild_id: guild_id.clone(),
+            user,
+            state: ProfileState::Loading,
+            scroll: 0,
+        });
+        (user_id, guild_id)
     }
 
     /// Open the profile popup for the selected message's author, over any
@@ -6115,6 +6160,122 @@ impl App {
         out
     }
 
+    // Alt+R: finding a member of the open community
+
+    /// The reader's permissions in a community, before any channel's
+    /// overwrites: what a guild-level check reads.
+    pub fn guild_permissions(&self, guild_id: &str) -> u64 {
+        let Some(guild) = self.guilds.iter().find(|g| g.id == guild_id) else {
+            return 0;
+        };
+        if guild.owner_id == self.me.id {
+            return u64::MAX;
+        }
+        let base = guild
+            .permissions
+            .as_deref()
+            .and_then(|p| p.parse::<u64>().ok())
+            .unwrap_or(0);
+        if base & crate::permissions::ADMINISTRATOR != 0 {
+            u64::MAX
+        } else {
+            base
+        }
+    }
+
+    /// Whether the member index is open to the reader. The server gates it
+    /// behind any one of the moderator permissions, so an ordinary member
+    /// is told that here rather than by a 403.
+    pub fn can_search_members(&self, guild_id: &str) -> bool {
+        const QUALIFYING: u64 = crate::permissions::MANAGE_GUILD
+            | crate::permissions::MANAGE_ROLES
+            | crate::permissions::MANAGE_NICKNAMES
+            | crate::permissions::BAN_MEMBERS
+            | crate::permissions::MODERATE_MEMBERS
+            | crate::permissions::KICK_MEMBERS;
+        self.guild_permissions(guild_id) & QUALIFYING != 0
+    }
+
+    /// Open the finder for the community now open. None when there is no
+    /// community, Some(false) when the reader may not search it.
+    pub fn open_member_search(&mut self) -> Option<bool> {
+        let guild_id = self.active_guild_id()?;
+        if !self.can_search_members(&guild_id) {
+            return Some(false);
+        }
+        self.close_overlays();
+        self.member_search = Some(MemberSearchView {
+            guild_id,
+            query: String::new(),
+            state: MemberSearchState::Idle,
+            selected: 0,
+        });
+        Some(true)
+    }
+
+    pub fn dismiss_member_search(&mut self) {
+        self.member_search = None;
+    }
+
+    pub fn member_search_len(&self) -> usize {
+        match self.member_search.as_ref().map(|v| &v.state) {
+            Some(MemberSearchState::Ready(members)) => members.len(),
+            _ => 0,
+        }
+    }
+
+    pub fn member_search_move(&mut self, delta: isize) {
+        let count = self.member_search_len();
+        if let Some(view) = &mut self.member_search {
+            view.selected = if count == 0 {
+                0
+            } else {
+                (view.selected as isize + delta).clamp(0, count as isize - 1) as usize
+            };
+        }
+    }
+
+    pub fn member_search_selected(&self) -> Option<crate::api::types::GuildMemberSearchResult> {
+        let view = self.member_search.as_ref()?;
+        match &view.state {
+            MemberSearchState::Ready(members) => members.get(view.selected).cloned(),
+            _ => None,
+        }
+    }
+
+    /// Mark the search as running, and give back what to search for.
+    pub fn member_search_start(&mut self) -> Option<(String, String)> {
+        let view = self.member_search.as_mut()?;
+        view.state = MemberSearchState::Running;
+        view.selected = 0;
+        Some((view.guild_id.clone(), view.query.clone()))
+    }
+
+    pub fn set_member_search_results(
+        &mut self,
+        for_guild: &str,
+        response: crate::api::types::GuildMemberSearchResponse,
+    ) {
+        if let Some(view) = &mut self.member_search
+            && view.guild_id == for_guild
+        {
+            view.state = if response.indexing {
+                MemberSearchState::Indexing
+            } else {
+                MemberSearchState::Ready(response.members)
+            };
+            view.selected = 0;
+        }
+    }
+
+    pub fn set_member_search_failed(&mut self, for_guild: &str, message: String) {
+        if let Some(view) = &mut self.member_search
+            && view.guild_id == for_guild
+        {
+            view.state = MemberSearchState::Failed(message);
+        }
+    }
+
     pub fn open_message_actions(&mut self) -> bool {
         let Some(msg) = self.selected_message() else {
             return false;
@@ -6475,6 +6636,7 @@ impl App {
         self.channel_picker = None;
         self.pings = None;
         self.message_actions = None;
+        self.member_search = None;
         self.pins = None;
         self.saved = None;
         self.reaction_users = None;

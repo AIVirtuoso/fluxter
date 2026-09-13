@@ -17,6 +17,14 @@ pub enum AppEvent {
         kind: String,
         payload: Value,
     },
+    MemberSearchResults {
+        guild_id: String,
+        response: Box<crate::api::types::GuildMemberSearchResponse>,
+    },
+    MemberSearchFailed {
+        guild_id: String,
+        message: String,
+    },
     GuildChannelsLoaded {
         guild_id: String,
         channels: Vec<ChannelResponse>,
@@ -1087,6 +1095,12 @@ pub fn apply_event(
             app.loading_channels.remove(&guild_id);
             app.api_backoff_after_failure(format!("channels:{guild_id}"));
             app.set_status(message);
+        }
+        AppEvent::MemberSearchResults { guild_id, response } => {
+            app.set_member_search_results(&guild_id, *response);
+        }
+        AppEvent::MemberSearchFailed { guild_id, message } => {
+            app.set_member_search_failed(&guild_id, message);
         }
         AppEvent::GuildMembersLoaded { guild_id, members } => {
             app.set_guild_members(&guild_id, members);

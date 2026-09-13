@@ -1,12 +1,19 @@
 use crate::api::types::PermissionOverwrite;
 
+pub const KICK_MEMBERS: u64 = 1 << 1;
+pub const BAN_MEMBERS: u64 = 1 << 2;
 pub const ADMINISTRATOR: u64 = 0x8;
+pub const MANAGE_GUILD: u64 = 1 << 5;
 pub const ADD_REACTIONS: u64 = 0x40;
 pub const VIEW_CHANNEL: u64 = 0x400;
 pub const SEND_MESSAGES: u64 = 0x800;
 pub const SEND_TTS_MESSAGES: u64 = 0x1000;
 pub const MANAGE_MESSAGES: u64 = 0x2000;
 pub const CHANGE_NICKNAME: u64 = 0x4000000;
+pub const MANAGE_NICKNAMES: u64 = 1 << 27;
+pub const MANAGE_ROLES: u64 = 1 << 28;
+/// Applying and clearing a member's communication timeout.
+pub const MODERATE_MEMBERS: u64 = 1 << 40;
 
 /// Kept in sync with the API
 #[allow(dead_code)]

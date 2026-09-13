@@ -665,6 +665,26 @@ message, is a Fluxer Premium feature: the server refuses it and the
 client shows what it said. Communities you are in can always use their
 own.
 
+## Finding somebody in a community
+
+**Alt+R** opens the finder for the community you are in: type a name and
+press **Enter**. Each match shows what they are called here, their
+`username#0000`, how many roles they hold, whether it is a bot, and when
+they joined. **u** opens a profile, **d** starts a conversation with them,
+**Esc** closes.
+
+This goes through the server's own **member index**, which is the only way
+to reach somebody who has not said anything and is not on the member list
+-- a community of thousands never sends its whole membership to a client.
+
+Two things the server decides, not this client. The index needs **one of
+the moderator permissions** (Manage Community, Manage Roles, Manage
+Nicknames, Ban Members, Moderate Members or Remove Members); without one
+the key says so rather than sending a request that would come back 403. And
+a community whose index is **still being built** answers with that fact
+instead of results, which the finder shows as itself -- it is an answer, not
+a failure, and trying again shortly is the remedy.
+
 ## The member list
 
 **Alt+M** opens the roster of the open channel in a column to the right
@@ -1236,6 +1256,7 @@ close. The profile of a selected message's author is on **u** now.
 | **U**                   | Jump to the **new messages** line (see "The new messages line").                                                                                                                                                                                        |
 | **Alt+M**               | **Member list** of the open channel, in a column beside the messages (see "The member list"). **Alt+J** / **Alt+K** scroll it. Closes itself in a direct message; not drawn below 80 columns.                                                            |
 
+| **Alt+R**               | **Find somebody** in the open community through its member index: **Enter** searches, **u** opens a profile, **d** starts a conversation (see "Finding somebody in a community").                          |
 | **Alt+F**               | **Friends**: friends, the requests both ways, and the accounts you have blocked (see "Friends and blocking"). **←** / **→** switch group, **+** adds by tag, **Esc** closes.                                                                             |
 
 | **Alt+P**               | **Pinned messages** of the open channel, newest pin first. **↑** / **↓** move, **Enter** jumps to one, **x** unpins it, **R** reloads, **Esc** / **q** close. Opening the list marks the channel's pins seen.                                            |

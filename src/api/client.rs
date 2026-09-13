@@ -1051,6 +1051,35 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// Search a community's member index. Needs membership and one of the
+    /// moderator permissions; an ordinary member gets 403 whatever they
+    /// search for. A community whose index is still being built answers
+    /// with `indexing` rather than results.
+    pub async fn search_guild_members(
+        &self,
+        guild_id: &str,
+        query: &str,
+        limit: u32,
+    ) -> Result<crate::api::types::GuildMemberSearchResponse> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            #[serde(skip_serializing_if = "str::is_empty")]
+            query: &'a str,
+            limit: u32,
+        }
+        self.send_json(
+            Method::POST,
+            &format!("/guilds/{guild_id}/members-search"),
+            None::<&()>,
+            Some(&Body {
+                query: query.trim(),
+                limit,
+            }),
+            false,
+        )
+        .await
+    }
+
     /// Leave a community. The reader cannot leave one they own; the
     /// server says so.
     pub async fn leave_guild(&self, guild_id: &str) -> Result<()> {
