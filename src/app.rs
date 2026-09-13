@@ -1041,6 +1041,17 @@ pub enum CommunityMode {
         webhook_id: String,
         name: String,
     },
+    /// A community's emoji or its stickers, to add, rename or delete one.
+    /// Both come from READY, so there is nothing to load.
+    Expressions { guild_id: String, stickers: bool },
+    /// The second press an emoji or sticker deletion asks for: every
+    /// message that used it loses it.
+    ConfirmExpressionDelete {
+        guild_id: String,
+        stickers: bool,
+        id: String,
+        name: String,
+    },
     /// What an invite leads to, looked up before it is taken, so nobody
     /// joins something they cannot see the name of.
     Preview { code: String, state: PreviewState },
@@ -1114,6 +1125,21 @@ pub enum CommunityInput {
     NewWebhook(String),
     /// A new name for the webhook under the cursor.
     RenameWebhook { webhook_id: String, text: String },
+    /// The picture a new emoji or sticker is made from.
+    ExpressionPath { stickers: bool, text: String },
+    /// Its name, asked for once the picture has been read; the data URI is
+    /// carried along so the file is read once.
+    ExpressionName {
+        stickers: bool,
+        data_uri: String,
+        text: String,
+    },
+    /// A new name for the emoji or sticker under the cursor.
+    RenameExpression {
+        stickers: bool,
+        id: String,
+        text: String,
+    },
 }
 
 impl CommunityInput {
@@ -1128,6 +1154,9 @@ impl CommunityInput {
             | Self::NewWebhook(t) => t,
             Self::RenameRole { text, .. } => text,
             Self::RenameWebhook { text, .. } => text,
+            Self::ExpressionPath { text, .. }
+            | Self::ExpressionName { text, .. }
+            | Self::RenameExpression { text, .. } => text,
         }
     }
 
@@ -1142,6 +1171,9 @@ impl CommunityInput {
             | Self::NewWebhook(t) => t,
             Self::RenameRole { text, .. } => text,
             Self::RenameWebhook { text, .. } => text,
+            Self::ExpressionPath { text, .. }
+            | Self::ExpressionName { text, .. }
+            | Self::RenameExpression { text, .. } => text,
         }
     }
 
@@ -1156,6 +1188,15 @@ impl CommunityInput {
             Self::VanityCode(_) => "Custom code (empty clears it)",
             Self::NewWebhook(_) => "Name for the webhook",
             Self::RenameWebhook { .. } => "New name for the webhook",
+            Self::ExpressionPath {
+                stickers: false, ..
+            } => "Path to an image for the emoji",
+            Self::ExpressionPath { stickers: true, .. } => "Path to an image for the sticker",
+            Self::ExpressionName {
+                stickers: false, ..
+            } => "Name for the emoji",
+            Self::ExpressionName { stickers: true, .. } => "Name for the sticker",
+            Self::RenameExpression { .. } => "New name",
         }
     }
 }
@@ -1782,6 +1823,8 @@ pub enum CommunityAction {
     Vanity,
     AuditLog,
     Webhooks,
+    Emojis,
+    Stickers,
     Leave,
 }
 
@@ -1799,6 +1842,8 @@ impl CommunityAction {
             Self::Vanity => "Custom invite address",
             Self::AuditLog => "What has been done lately",
             Self::Webhooks => "Webhooks in this community",
+            Self::Emojis => "Emoji in this community",
+            Self::Stickers => "Stickers in this community",
             Self::Leave => "Leave this community",
         }
     }
@@ -6804,6 +6849,10 @@ impl App {
             if self.guild_permissions(&guild_id) & crate::permissions::MANAGE_WEBHOOKS != 0 {
                 out.push(CommunityAction::Webhooks);
             }
+            if self.can_touch_expressions(&guild_id) {
+                out.push(CommunityAction::Emojis);
+                out.push(CommunityAction::Stickers);
+            }
             out.push(CommunityAction::Leave);
         }
         out
@@ -6837,6 +6886,15 @@ impl App {
         } else {
             base
         }
+    }
+
+    /// Whether the emoji and sticker lists are worth offering: adding one
+    /// needs CREATE_EXPRESSIONS, and changing somebody else's needs
+    /// MANAGE_EXPRESSIONS. Either is enough to want the list.
+    pub fn can_touch_expressions(&self, guild_id: &str) -> bool {
+        self.guild_permissions(guild_id)
+            & (crate::permissions::CREATE_EXPRESSIONS | crate::permissions::MANAGE_EXPRESSIONS)
+            != 0
     }
 
     pub fn open_message_actions(&mut self) -> bool {
@@ -7241,6 +7299,10 @@ impl App {
                 ..
             }) => hooks.len(),
             Some(CommunityMode::ConfirmWebhookDelete { .. }) => 2,
+            Some(CommunityMode::Expressions { guild_id, stickers }) => {
+                self.expression_rows(guild_id, *stickers).len()
+            }
+            Some(CommunityMode::ConfirmExpressionDelete { .. }) => 2,
             // nothing to move through while it is still coming, and the
             // preview is one thing rather than a list
             _ => 0,
@@ -8497,6 +8559,105 @@ impl App {
             format!("{base}/webhooks/{webhook_id}/{token}")
         }
     }
+    pub fn open_guild_expressions(&mut self, guild_id: String, stickers: bool) {
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::Expressions { guild_id, stickers };
+            view.selected = 0;
+        }
+    }
+
+    /// The emoji or the stickers of a community, by name: (id, name,
+    /// animated).
+    pub fn expression_rows(&self, guild_id: &str, stickers: bool) -> Vec<(String, String, bool)> {
+        let mut rows: Vec<(String, String, bool)> = if stickers {
+            self.guild_stickers
+                .get(guild_id)
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|s| (s.id.clone(), s.name.clone(), s.animated))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            self.guild_emojis
+                .get(guild_id)
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|e| (e.id.clone(), e.name.clone(), e.animated))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        rows.sort_by_key(|row| row.1.to_lowercase());
+        rows
+    }
+
+    /// The community whose expressions are on screen, and which of the two
+    /// lists it is.
+    pub fn community_expressions(&self) -> Option<(String, bool)> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::Expressions { guild_id, stickers } => {
+                Some((guild_id.clone(), *stickers))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn community_selected_expression(&self) -> Option<(String, String, bool)> {
+        let view = self.community.as_ref()?;
+        let (guild_id, stickers) = self.community_expressions()?;
+        self.expression_rows(&guild_id, stickers)
+            .get(view.selected)
+            .cloned()
+    }
+
+    /// x on an emoji or sticker: ask, with the cursor on "No", since every
+    /// message that used it loses it. False when nothing is under the
+    /// cursor.
+    pub fn ask_expression_delete(&mut self) -> bool {
+        let Some((guild_id, stickers)) = self.community_expressions() else {
+            return false;
+        };
+        let Some((id, name, _)) = self.community_selected_expression() else {
+            return false;
+        };
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::ConfirmExpressionDelete {
+                guild_id,
+                stickers,
+                id,
+                name,
+            };
+            view.selected = 1;
+        }
+        true
+    }
+
+    /// The deletion being asked about, and whether the cursor is on "Yes":
+    /// (community, stickers, id, name, yes).
+    pub fn community_expression_delete_choice(
+        &self,
+    ) -> Option<(String, bool, String, String, bool)> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::ConfirmExpressionDelete {
+                guild_id,
+                stickers,
+                id,
+                name,
+            } => Some((
+                guild_id.clone(),
+                *stickers,
+                id.clone(),
+                name.clone(),
+                view.selected == 0,
+            )),
+            _ => None,
+        }
+    }
 
     /// Step back out of a list the menu led to, or close it.
     pub fn community_back(&mut self) {
@@ -8523,6 +8684,17 @@ impl App {
             view.mode = CommunityMode::Webhooks {
                 guild_id: guild_id.clone(),
                 state: WebhooksState::Ready(hooks.clone()),
+            };
+            view.selected = 0;
+            return;
+        }
+        if let CommunityMode::ConfirmExpressionDelete {
+            guild_id, stickers, ..
+        } = &view.mode
+        {
+            view.mode = CommunityMode::Expressions {
+                guild_id: guild_id.clone(),
+                stickers: *stickers,
             };
             view.selected = 0;
             return;
@@ -13225,5 +13397,135 @@ mod webhook_tests {
             .join("\n");
         assert!(screen.contains("deploys"), "{screen}");
         assert!(!screen.contains("s3cret"), "{screen}");
+    }
+}
+
+/// The emoji and sticker lists: who is offered them, and what they hold.
+#[cfg(test)]
+mod expression_tests {
+    use super::*;
+    use crate::api::types::{
+        GuildEmojiResponse, GuildResponse, GuildStickerResponse, UserPrivateResponse,
+        WellKnownFluxerResponse,
+    };
+
+    fn app_with(permissions: u64) -> App {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: "olive".into(),
+            permissions: Some(permissions.to_string()),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            WellKnownFluxerResponse::default(),
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            None,
+            UiSettings::default(),
+        );
+        app.guild_emojis.insert(
+            "g".into(),
+            vec![
+                GuildEmojiResponse {
+                    id: "e2".into(),
+                    name: "zebra".into(),
+                    animated: false,
+                },
+                GuildEmojiResponse {
+                    id: "e1".into(),
+                    name: "Apple".into(),
+                    animated: true,
+                },
+            ],
+        );
+        app.guild_stickers.insert(
+            "g".into(),
+            vec![GuildStickerResponse {
+                id: "s1".into(),
+                name: "partycat".into(),
+                animated: true,
+                ..Default::default()
+            }],
+        );
+        app
+    }
+
+    #[test]
+    fn either_permission_offers_the_lists() {
+        let app = app_with(crate::permissions::VIEW_CHANNEL);
+        assert!(!app.community_actions().contains(&CommunityAction::Emojis));
+        for permission in [
+            crate::permissions::CREATE_EXPRESSIONS,
+            crate::permissions::MANAGE_EXPRESSIONS,
+        ] {
+            let app = app_with(permission);
+            assert!(app.community_actions().contains(&CommunityAction::Emojis));
+            assert!(app.community_actions().contains(&CommunityAction::Stickers));
+        }
+    }
+
+    /// The rows are sorted by name whatever order READY sent them in, and
+    /// the case of a name does not decide where it goes.
+    #[test]
+    fn the_rows_are_sorted_by_name() {
+        let app = app_with(crate::permissions::CREATE_EXPRESSIONS);
+        let names: Vec<String> = app
+            .expression_rows("g", false)
+            .into_iter()
+            .map(|(_, name, _)| name)
+            .collect();
+        assert_eq!(names, ["Apple", "zebra"]);
+        assert_eq!(app.expression_rows("g", true).len(), 1);
+    }
+
+    /// x asks with the cursor on "No", and Esc goes back to the same list.
+    #[test]
+    fn deleting_an_expression_asks_first() {
+        let mut app = app_with(crate::permissions::MANAGE_EXPRESSIONS);
+        app.open_communities();
+        app.open_guild_expressions("g".into(), true);
+        assert!(app.ask_expression_delete());
+        assert_eq!(app.community_len(), 2);
+        assert_eq!(
+            app.community_expression_delete_choice()
+                .map(|(_, stickers, id, _, yes)| (stickers, id, yes)),
+            Some((true, "s1".to_string(), false))
+        );
+        app.community_move(-1);
+        assert!(
+            app.community_expression_delete_choice()
+                .is_some_and(|(_, _, _, _, yes)| yes)
+        );
+        app.community_back();
+        assert_eq!(app.community_expressions(), Some(("g".to_string(), true)));
+        assert_eq!(app.community_len(), 1);
+    }
+
+    #[test]
+    fn the_cursor_walks_the_list_and_says_which_list_it_is() {
+        let mut app = app_with(crate::permissions::CREATE_EXPRESSIONS);
+        app.open_communities();
+        app.open_guild_expressions("g".into(), false);
+        assert_eq!(app.community_len(), 2);
+        assert_eq!(app.community_expressions(), Some(("g".to_string(), false)));
+        app.community_move(1);
+        assert_eq!(
+            app.community_selected_expression().map(|(id, _, _)| id),
+            Some("e2".into())
+        );
+        app.open_guild_expressions("g".into(), true);
+        assert_eq!(app.community_len(), 1);
+        assert_eq!(
+            app.community_selected_expression().map(|(_, name, _)| name),
+            Some("partycat".into())
+        );
     }
 }

@@ -1150,6 +1150,8 @@ first three are always there, the last two only inside a community.
 | **Custom invite address** | The community's own short link, how many have joined through it, **r** to set one, **y** to copy it, **x** to clear it. A code needs the community to have the feature for it, and the server says so when it has not. Needs **Manage Community**. |
 | **What has been done lately** | The audit log: who did what, when, and the reason they gave. The server keeps 45 days of it; this shows the newest fifty, **R** reloads. Needs **View Audit Log**. |
 | **Webhooks in this community** | Every webhook and the channel it posts into. **+** makes one in the channel now open, **r** renames, **y** copies its address, **x** deletes after asking. Needs **Manage Webhooks**. |
+| **Emoji in this community** | Every custom emoji by name. **+** adds one from a file, **r** renames, **x** deletes after asking. |
+| **Stickers in this community** | The same for stickers. |
 | **Leave this community** | Leaves it. A community you own cannot be left, and the client says so rather than sending a call the server would refuse. |
 
 ### An invite is looked up before it is taken
@@ -1247,6 +1249,24 @@ list contains it.
 
 Deleting a webhook is the only way to revoke one, which is why **x** asks
 first, with the cursor on "No".
+### Adding an emoji or a sticker
+
+**+** on either list asks for a **path to an image** (`~` understood),
+reads it, and then asks for a **name**, already filled in with the file's
+own name. The client turns the bytes into the data URI the API takes, so
+nothing is uploaded separately.
+
+The limit is **512 KB decoded**, which the client checks before sending
+rather than after a round trip; the instance may allow less, and its
+refusal is shown as it came. An emoji name is 2 to 32 characters of
+letters, digits and underscore, a sticker name 2 to 30 of anything. Both
+lists need **Create Expressions** to add, and somebody else's emoji or
+sticker needs **Manage Expressions** to rename or delete.
+
+The lists come from what the gateway already sent at startup, so they open
+with no request at all, and `GUILD_EMOJIS_UPDATE` and
+`GUILD_STICKERS_UPDATE` redraw them after every change -- yours or anybody
+else's.
 
 ## Message formatting
 
@@ -1487,6 +1507,7 @@ close. The profile of a selected message's author is on **u** now.
 | **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites or its roles, or leave it (see "Communities and invites").                                                                                                        |
 | **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites, rename it, set its custom invite address, read its audit log, or leave it (see "Communities and invites").                                                                                                        |
 | **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites or its webhooks, or leave it (see "Communities and invites").                                                                                                        |
+| **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites, its emoji or its stickers, or leave it (see "Communities and invites").                                                                                                        |
 
 | **Alt+V**               | **Voice**: join the open voice channel, ring a conversation, answer or turn down a call, mute, deafen, leave (see "Voice").                                                                                                                             |
 | **F1**                  | **Keybindings** overlay - **↑** / **↓** / **PgUp** / **PgDn** scroll when it does not fit (**Esc** / **Enter** / **q** to close).                                                                                                                        |

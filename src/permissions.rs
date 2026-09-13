@@ -19,6 +19,10 @@ pub const MANAGE_ROLES: u64 = 1 << 28;
 pub const MODERATE_MEMBERS: u64 = 1 << 40;
 /// Making, changing and deleting a webhook on a channel.
 pub const MANAGE_WEBHOOKS: u64 = 1 << 29;
+/// Adding an emoji or a sticker, and changing the ones you added.
+pub const CREATE_EXPRESSIONS: u64 = 1 << 43;
+/// Changing and deleting an emoji or sticker somebody else added.
+pub const MANAGE_EXPRESSIONS: u64 = 1 << 30;
 
 /// Kept in sync with the API
 #[allow(dead_code)]
