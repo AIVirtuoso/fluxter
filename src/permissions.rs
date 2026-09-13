@@ -7,6 +7,8 @@ pub const SEND_MESSAGES: u64 = 0x800;
 pub const SEND_TTS_MESSAGES: u64 = 0x1000;
 pub const MANAGE_MESSAGES: u64 = 0x2000;
 pub const CHANGE_NICKNAME: u64 = 0x4000000;
+/// Making, changing and deleting a role, and giving one to a member.
+pub const MANAGE_ROLES: u64 = 1 << 28;
 
 /// Kept in sync with the API
 #[allow(dead_code)]

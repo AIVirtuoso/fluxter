@@ -1989,6 +1989,55 @@ fn handle_key_event(
                     view.input = Some(crate::app::CommunityInput::Search(String::new()));
                 }
             }
+            KeyCode::Char('+') if app.community_roles_guild().is_some() => {
+                if let Some(view) = app.community.as_mut() {
+                    view.input = Some(crate::app::CommunityInput::NewRole(String::new()));
+                }
+            }
+            // r renames the role under the cursor, h shows its members
+            // apart, m lets anybody mention it, x deletes it
+            KeyCode::Char('r') if app.community_selected_role().is_some() => {
+                if let Some(role) = app.community_selected_role()
+                    && let Some(view) = app.community.as_mut()
+                {
+                    view.input = Some(crate::app::CommunityInput::RenameRole {
+                        role_id: role.id,
+                        text: role.name,
+                    });
+                }
+            }
+            KeyCode::Char('h') | KeyCode::Char('m')
+                if app.community_selected_role().is_some()
+                    && !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                let hoist = matches!(key.code, KeyCode::Char('h'));
+                if let (Some(role), Some(guild_id)) =
+                    (app.community_selected_role(), app.community_roles_guild())
+                {
+                    let body = if hoist {
+                        crate::api::types::ModifyGuildRoleRequest {
+                            hoist: Some(!role.hoist),
+                            ..Default::default()
+                        }
+                    } else {
+                        crate::api::types::ModifyGuildRoleRequest {
+                            mentionable: Some(!role.mentionable),
+                            ..Default::default()
+                        }
+                    };
+                    app.set_status("Changing the role…");
+                    spawn_modify_role(
+                        client.clone(),
+                        event_tx.clone(),
+                        guild_id,
+                        role.id,
+                        body,
+                        "Role changed.",
+                    );
+                }
+            }
             KeyCode::Char('+') => {
                 // a new invite is always to the channel now open, which
                 // is the only one the reader has said anything about
@@ -2014,6 +2063,20 @@ fn handle_key_event(
                     } else {
                         "Copied the invite link: no clipboard program, Alt+V pastes it."
                     });
+                }
+            }
+            KeyCode::Char('x') | KeyCode::Delete if app.community_selected_role().is_some() => {
+                if let (Some(role), Some(guild_id)) =
+                    (app.community_selected_role(), app.community_roles_guild())
+                {
+                    app.set_status(format!("Deleting {}…", role.name));
+                    spawn_delete_role(
+                        client.clone(),
+                        event_tx.clone(),
+                        guild_id,
+                        role.id,
+                        role.name,
+                    );
                 }
             }
             KeyCode::Char('x') | KeyCode::Delete => {
@@ -3720,6 +3783,17 @@ fn run_community_action(
             app.open_guild_invites(guild_id.clone());
             spawn_guild_invites(client.clone(), event_tx.clone(), guild_id);
         }
+        crate::app::CommunityAction::Roles => {
+            let Some(guild_id) = app.active_guild_id() else {
+                return;
+            };
+            // READY carries every community's roles, so there is nothing
+            // to fetch; a community whose roles never arrived asks once
+            if app.guild_roles.get(&guild_id).is_none_or(|r| r.is_empty()) {
+                spawn_guild_roles_load(client.clone(), event_tx.clone(), guild_id.clone());
+            }
+            app.open_guild_roles(guild_id);
+        }
         crate::app::CommunityAction::Leave => {
             let Some(guild_id) = app.active_guild_id() else {
                 return;
@@ -3909,6 +3983,46 @@ fn run_community_input(
             app.dismiss_communities();
             app.set_status(format!("Making {name}…"));
             spawn_create_guild(client.clone(), event_tx.clone(), name);
+        }
+        crate::app::CommunityInput::NewRole(text) => {
+            let Some(guild_id) = app.community_roles_guild() else {
+                return;
+            };
+            let name = text.trim().to_string();
+            if name.is_empty() {
+                app.set_status("Give it a name.");
+                return;
+            }
+            if let Some(view) = app.community.as_mut() {
+                view.input = None;
+            }
+            app.set_status(format!("Making {name}…"));
+            spawn_create_role(client.clone(), event_tx.clone(), guild_id, name);
+        }
+        crate::app::CommunityInput::RenameRole { role_id, text } => {
+            let Some(guild_id) = app.community_roles_guild() else {
+                return;
+            };
+            let name = text.trim().to_string();
+            if name.is_empty() {
+                app.set_status("Give it a name.");
+                return;
+            }
+            if let Some(view) = app.community.as_mut() {
+                view.input = None;
+            }
+            app.set_status("Renaming…");
+            spawn_modify_role(
+                client.clone(),
+                event_tx.clone(),
+                guild_id,
+                role_id,
+                crate::api::types::ModifyGuildRoleRequest {
+                    name: Some(name),
+                    ..Default::default()
+                },
+                "Renamed.",
+            );
         }
         crate::app::CommunityInput::Search(text) => {
             let query = text.trim().to_string();
@@ -4178,6 +4292,66 @@ fn spawn_close_channel(
             }
             Err(err) => {
                 let _ = event_tx.send(AppEvent::ApiError(format!("Failed to close it: {err}")));
+            }
+        }
+    });
+}
+
+/// Make a role. GUILD_ROLE_CREATE brings it back, so the list redraws
+/// itself.
+fn spawn_create_role(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    name: String,
+) {
+    tokio::spawn(async move {
+        match client.create_guild_role(&guild_id, &name).await {
+            Ok(role) => {
+                let _ = event_tx.send(AppEvent::SetStatus(format!("{} is a role now.", role.name)));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to make it: {err}")));
+            }
+        }
+    });
+}
+
+fn spawn_modify_role(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    role_id: String,
+    body: crate::api::types::ModifyGuildRoleRequest,
+    done: &str,
+) {
+    let done = done.to_string();
+    tokio::spawn(async move {
+        match client.modify_guild_role(&guild_id, &role_id, &body).await {
+            Ok(_) => {
+                let _ = event_tx.send(AppEvent::SetStatus(done));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to change it: {err}")));
+            }
+        }
+    });
+}
+
+fn spawn_delete_role(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    role_id: String,
+    name: String,
+) {
+    tokio::spawn(async move {
+        match client.delete_guild_role(&guild_id, &role_id).await {
+            Ok(()) => {
+                let _ = event_tx.send(AppEvent::SetStatus(format!("{name} is gone.")));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to delete it: {err}")));
             }
         }
     });
@@ -4639,6 +4813,51 @@ fn run_message_action(
                         let _ = event_tx.send(AppEvent::ApiError(format!(
                             "Failed to delete the messages: {err}"
                         )));
+                    }
+                }
+            });
+        }
+        MessageAction::GiveRole | MessageAction::TakeRole => {
+            let give = action == MessageAction::GiveRole;
+            let Some(role_id) = argument else {
+                return;
+            };
+            let Some(guild_id) = app.guild_id_for_active_channel() else {
+                return;
+            };
+            let Some(msg) = app.message_by_id(&channel_id, &message_id) else {
+                return;
+            };
+            let name = app.shown_name_for_user(Some(guild_id.as_str()), &msg.author);
+            let role_name = app
+                .guild_roles
+                .get(&guild_id)
+                .and_then(|roles| roles.iter().find(|r| r.id == role_id))
+                .map(|r| r.name.clone())
+                .unwrap_or_else(|| "the role".to_string());
+            let user_id = msg.author.id.clone();
+            app.set_status(if give {
+                format!("Giving {name} {role_name}…")
+            } else {
+                format!("Taking {role_name} off {name}…")
+            });
+            let client = client.clone();
+            let event_tx = event_tx.clone();
+            tokio::spawn(async move {
+                match client
+                    .set_member_role(&guild_id, &user_id, &role_id, give)
+                    .await
+                {
+                    Ok(()) => {
+                        let _ = event_tx.send(AppEvent::SetStatus(if give {
+                            format!("{name} has {role_name}.")
+                        } else {
+                            format!("{name} no longer has {role_name}.")
+                        }));
+                    }
+                    Err(err) => {
+                        let _ = event_tx
+                            .send(AppEvent::ApiError(format!("Failed to change it: {err}")));
                     }
                 }
             });

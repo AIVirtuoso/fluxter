@@ -1051,6 +1051,79 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// Make a role. With no permissions given the server copies the
+    /// everyone role's, and the new role lands at the bottom of the
+    /// hierarchy.
+    pub async fn create_guild_role(
+        &self,
+        guild_id: &str,
+        name: &str,
+    ) -> Result<crate::api::types::GuildRoleResponse> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            name: &'a str,
+        }
+        self.send_json(
+            Method::POST,
+            &format!("/guilds/{guild_id}/roles"),
+            None::<&()>,
+            Some(&Body { name }),
+            false,
+        )
+        .await
+    }
+
+    /// Change a role. An omitted field keeps what is stored; a caller who
+    /// does not own the community cannot grant a permission they lack.
+    pub async fn modify_guild_role(
+        &self,
+        guild_id: &str,
+        role_id: &str,
+        body: &crate::api::types::ModifyGuildRoleRequest,
+    ) -> Result<crate::api::types::GuildRoleResponse> {
+        self.send_json(
+            Method::PATCH,
+            &format!("/guilds/{guild_id}/roles/{role_id}"),
+            None::<&()>,
+            Some(body),
+            false,
+        )
+        .await
+    }
+
+    pub async fn delete_guild_role(&self, guild_id: &str, role_id: &str) -> Result<()> {
+        self.send_empty::<()>(
+            Method::DELETE,
+            &format!("/guilds/{guild_id}/roles/{role_id}"),
+            None,
+            "delete the role",
+        )
+        .await
+    }
+
+    /// Give a member a role, or take it away. Needs MANAGE_ROLES and
+    /// standing over the role itself.
+    pub async fn set_member_role(
+        &self,
+        guild_id: &str,
+        user_id: &str,
+        role_id: &str,
+        give: bool,
+    ) -> Result<()> {
+        let method = if give { Method::PUT } else { Method::DELETE };
+        self.send_empty::<()>(
+            method,
+            &format!("/guilds/{guild_id}/members/{user_id}/roles/{role_id}"),
+            None,
+            if give {
+                "give them the role"
+            } else {
+                "take the role away"
+            },
+        )
+        .await
+    }
+
     /// Leave a community. The reader cannot leave one they own; the
     /// server says so.
     pub async fn leave_guild(&self, guild_id: &str) -> Result<()> {

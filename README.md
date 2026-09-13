@@ -898,10 +898,36 @@ row, and those work straight from the message pane without the menu.
 | Delete | **Ctrl+D** | As before. |
 | Delete the marked messages | | **m** marks a message (a red cross appears in its margin); this deletes every marked message of the channel in one call. Asks a second time first. Needs **Manage Messages** and at least two marks, and the server refuses messages more than two weeks old. |
 | Report to the moderators | | Asks which of the server's twelve categories, then sends it. Other people's messages only. |
+| Give the author a role | | Lists the roles they have not got; **Enter** gives one. Needs **Manage Roles**. |
+| Take a role off the author | | Lists the roles they hold; **Enter** takes one back. Needs **Manage Roles**. |
 
 Pins, bookmarks, bulk deletes and cleared reactions arrive over the
 gateway as well, so a change made in another client shows here without a
 reload.
+
+### Roles
+
+The community menu (**Alt+C**) has the roles of the community you are in:
+every role highest first, each drawn in its own colour, with `·shown
+apart` on the ones whose members are their own group in the member list
+and `·mentionable` on the ones anybody may mention.
+
+A new role is made with **+** and starts where the server puts it -- at
+the bottom of the hierarchy, with the permissions the everyone role has
+and nothing else. **r** renames, **h** and **m** toggle those two marks,
+**x** deletes. The everyone role is in the list because its colour and its
+permissions are real, but the server refuses to delete or reorder it.
+
+Giving a role to somebody is in the message menu instead, since that is
+where a person is in front of you: **Give the author a role** lists what
+they have not got and **Take a role off the author** what they hold. The
+everyone role is on neither list, being nobody's to give.
+
+Roles redraw from the gateway -- GUILD_ROLE_CREATE, _UPDATE and _DELETE --
+so a change made here or in another client appears as it happens. What
+this client does not do is **reorder** roles or **edit their
+permissions**: the hierarchy and the permission masks are where a mistake
+is expensive and a single number is no way to show sixty-odd bits.
 
 ## Searching
 
@@ -998,6 +1024,7 @@ first three are always there, the last two only inside a community.
 | **Make a community** | Asks for a name and makes it. You are its owner. |
 | **Browse the directory** | The instance's discovery listing. **/** searches it, **Enter** joins straight from the list without an invite. |
 | **Invites to this community** | Every invite you may see. **y** copies its link, **+** makes one to the channel now open, **x** revokes. |
+| **Roles in this community** | Every role, highest first, each in its own colour. **+** makes one, **r** renames, **h** shows its members as their own group in the member list, **m** lets anybody mention it, **x** deletes it. Needs **Manage Roles**. |
 | **Leave this community** | Leaves it. A community you own cannot be left, and the client says so rather than sending a call the server would refuse. |
 
 ### An invite is looked up before it is taken
@@ -1246,7 +1273,7 @@ close. The profile of a selected message's author is on **u** now.
 | **Alt+N**               | **Start a conversation** with somebody, or a group with several (see "Conversations").                                                                                                                                                                  |
 | **Alt+G**               | Look after the **group** now open: rename it, add somebody, take somebody out, leave it.                                                                                                                                                                |
 
-| **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites, or leave it (see "Communities and invites").                                                                                                        |
+| **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites or its roles, or leave it (see "Communities and invites").                                                                                                        |
 
 | **Alt+V**               | **Voice**: join the open voice channel, ring a conversation, answer or turn down a call, mute, deafen, leave (see "Voice").                                                                                                                             |
 | **F1**                  | **Keybindings** overlay - **↑** / **↓** / **PgUp** / **PgDn** scroll when it does not fit (**Esc** / **Enter** / **q** to close).                                                                                                                        |

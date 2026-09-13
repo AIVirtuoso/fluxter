@@ -82,7 +82,8 @@ Messages
            keyboard's answer to the web client's right-click): pin, bookmark, mark
            unread, mark the channel or the community read, hide or show the link
            previews, who reacted, clear the reactions, copy a link or the id,
-           remove one file from it, delete the marked messages, report it.
+           remove one file from it, delete the marked messages, report it, give the
+           author a role or take one off them.
            ↑/↓ move, Enter chooses, Esc steps back out of a list or closes.
            The keys below are the same things without the menu.
   y or Ctrl+C - copy the selected message: its text and the links of its files, to

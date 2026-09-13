@@ -279,6 +279,65 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     .to_string(),
             )
         }
+        CommunityMode::Roles { guild_id } => {
+            let name = app
+                .guilds
+                .iter()
+                .find(|g| &g.id == guild_id)
+                .map(|g| g.name.clone())
+                .unwrap_or_default();
+            let roles = app.roles_for_list(guild_id);
+            let rows = if roles.is_empty() {
+                vec![Line::from(Span::styled(
+                    "  No roles yet (+ makes one).",
+                    muted,
+                ))]
+            } else {
+                roles
+                    .iter()
+                    .enumerate()
+                    .map(|(index, role)| {
+                        let selected = index == view.selected;
+                        // the colour is the role's own, which is what the
+                        // list is read by; 0 means "no colour"
+                        let role_style = if role.color == 0 {
+                            text
+                        } else {
+                            Style::default().fg(ratatui::style::Color::Rgb(
+                                ((role.color >> 16) & 0xFF) as u8,
+                                ((role.color >> 8) & 0xFF) as u8,
+                                (role.color & 0xFF) as u8,
+                            ))
+                        };
+                        let mut marks = String::new();
+                        if role.hoist {
+                            marks.push_str(" ·shown apart");
+                        }
+                        if role.mentionable {
+                            marks.push_str(" ·mentionable");
+                        }
+                        Line::from(vec![
+                            Span::styled(if selected { " \u{25B8} " } else { "   " }, accent),
+                            Span::styled(
+                                role.name.clone(),
+                                if selected {
+                                    role_style.add_modifier(Modifier::BOLD)
+                                } else {
+                                    role_style
+                                },
+                            ),
+                            Span::styled(marks, muted),
+                        ])
+                    })
+                    .collect()
+            };
+            (
+                format!(" Roles in {name} "),
+                rows,
+                "\u{2191}/\u{2193} move  \u{b7}  + make one  \u{b7}  r rename  \u{b7}  h show apart  \u{b7}  m mentionable  \u{b7}  x delete  \u{b7}  Esc back"
+                    .to_string(),
+            )
+        }
     };
 
     let block = Block::default()
