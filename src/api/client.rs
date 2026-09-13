@@ -1064,6 +1064,55 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// Make a channel in a community. Needs MANAGE_CHANNELS at guild
+    /// level, and an enrolled authenticator where the community's MFA
+    /// level is elevated and the caller does not own it -- which comes
+    /// back as 400 TWO_FACTOR_REQUIRED, not as a permission error.
+    pub async fn create_guild_channel(
+        &self,
+        guild_id: &str,
+        body: &crate::api::types::CreateGuildChannelRequest,
+    ) -> Result<ChannelResponse> {
+        self.send_json(
+            Method::POST,
+            &format!("/guilds/{guild_id}/channels"),
+            None::<&()>,
+            Some(body),
+            false,
+        )
+        .await
+    }
+
+    /// Change a community channel's name, topic or slowmode. The stored
+    /// type picks the body variant, so a `type` field would be ignored.
+    pub async fn modify_guild_channel(
+        &self,
+        channel_id: &str,
+        body: &crate::api::types::ModifyGuildChannelRequest,
+    ) -> Result<ChannelResponse> {
+        self.send_json(
+            Method::PATCH,
+            &format!("/channels/{channel_id}"),
+            None::<&()>,
+            Some(body),
+            false,
+        )
+        .await
+    }
+
+    /// Delete a community channel. This destroys its messages, their
+    /// attachments, its invites and its webhooks, with no grace period,
+    /// so the caller asks twice before getting here.
+    pub async fn delete_guild_channel(&self, channel_id: &str) -> Result<()> {
+        self.send_empty::<()>(
+            Method::DELETE,
+            &format!("/channels/{channel_id}"),
+            None,
+            "delete the channel",
+        )
+        .await
+    }
+
     /// Keep a conversation at the top of the list, or let it go.
     pub async fn set_dm_pinned(&self, channel_id: &str, pinned: bool) -> Result<()> {
         let method = if pinned { Method::PUT } else { Method::DELETE };

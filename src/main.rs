@@ -2241,6 +2241,45 @@ fn handle_key_event(
         }
         return;
     }
+    if app.channel_admin.is_some() {
+        // typing takes the keys while the footer is asking for text
+        if let Some(input) = app.channel_admin.as_ref().and_then(|v| v.input.clone()) {
+            match key.code {
+                KeyCode::Esc => app.channel_admin_back(),
+                KeyCode::Enter => run_channel_admin_input(app, client, event_tx, input),
+                KeyCode::Backspace => {
+                    if let Some(view) = app.channel_admin.as_mut()
+                        && let Some(input) = view.input.as_mut()
+                    {
+                        input.text_mut().pop();
+                    }
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(view) = app.channel_admin.as_mut()
+                        && let Some(input) = view.input.as_mut()
+                        && input.text().chars().count() < 1024
+                    {
+                        input.text_mut().push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.channel_admin_back(),
+            KeyCode::Up | KeyCode::Char('k') => app.channel_admin_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.channel_admin_move(1),
+            KeyCode::Home => app.channel_admin_move(isize::MIN / 2),
+            KeyCode::End => app.channel_admin_move(isize::MAX / 2),
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                run_channel_admin_row(app, client, event_tx)
+            }
+            KeyCode::Char('h') | KeyCode::Left => app.channel_admin_back(),
+            _ => {}
+        }
+        return;
+    }
 
     if app.pins.is_some() {
         match key.code {
@@ -3445,6 +3484,17 @@ fn handle_key_event(
                 spawn_set_dm_pinned(client.clone(), event_tx.clone(), channel_id, pinned);
             }
         }
+        // a on a community channel: the channel menu
+        KeyCode::Char('a')
+            if app.focus == Focus::Channels
+                && !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            if !app.open_channel_admin() {
+                app.set_status("Nothing to look after here; this is a conversation.");
+            }
+        }
         // x closes the conversation the cursor is on
         KeyCode::Char('x')
             if app.focus == Focus::Channels
@@ -4055,6 +4105,237 @@ fn run_voice_action(
 
 /// Enter on the footer's text: what it does depends on what was asked
 /// for.
+/// Enter on a channel-menu row: the ones that need text open the footer,
+/// the destructive one asks again, and the rest act.
+fn run_channel_admin_row(
+    app: &mut App,
+    client: &FluxerHttpClient,
+    event_tx: &UnboundedSender<AppEvent>,
+) {
+    use crate::app::{ChannelAdminAction, ChannelAdminInput, ChannelAdminMode};
+    let Some(view) = app.channel_admin.as_ref() else {
+        return;
+    };
+    // the sub-lists first: which kind of channel, and the second press
+    match view.mode {
+        ChannelAdminMode::NewKind => {
+            let Some((channel_type, _)) = crate::app::NEW_CHANNEL_KINDS.get(view.selected).copied()
+            else {
+                return;
+            };
+            if let Some(view) = app.channel_admin.as_mut() {
+                view.input = Some(ChannelAdminInput::NewName {
+                    channel_type,
+                    text: String::new(),
+                });
+            }
+            return;
+        }
+        ChannelAdminMode::ConfirmDelete => {
+            let go = view.selected == 0;
+            let channel_id = view.channel_id.clone();
+            let name = view.channel_name.clone();
+            app.dismiss_channel_admin();
+            if go {
+                app.set_status(format!("Deleting #{name}…"));
+                spawn_delete_channel(client.clone(), event_tx.clone(), channel_id, name);
+            }
+            return;
+        }
+        ChannelAdminMode::Actions => {}
+    }
+    let Some(action) = app.channel_admin_selected_action() else {
+        return;
+    };
+    match action {
+        ChannelAdminAction::New => {
+            if let Some(view) = app.channel_admin.as_mut() {
+                view.mode = ChannelAdminMode::NewKind;
+                view.selected = 0;
+            }
+        }
+        ChannelAdminAction::Rename => {
+            let current = app
+                .channel_admin
+                .as_ref()
+                .map(|v| v.channel_name.clone())
+                .unwrap_or_default();
+            if let Some(view) = app.channel_admin.as_mut() {
+                view.input = Some(ChannelAdminInput::Rename(current));
+            }
+        }
+        ChannelAdminAction::Topic => {
+            let current = app
+                .channel_admin
+                .as_ref()
+                .and_then(|v| app.channel_by_id(&v.channel_id))
+                .and_then(|c| c.topic.clone())
+                .unwrap_or_default();
+            if let Some(view) = app.channel_admin.as_mut() {
+                view.input = Some(ChannelAdminInput::Topic(current));
+            }
+        }
+        ChannelAdminAction::ClearTopic => {
+            let Some(view) = app.channel_admin.as_ref() else {
+                return;
+            };
+            let channel_id = view.channel_id.clone();
+            app.dismiss_channel_admin();
+            app.set_status("Clearing the topic…");
+            spawn_modify_channel(
+                client.clone(),
+                event_tx.clone(),
+                channel_id,
+                crate::api::types::ModifyGuildChannelRequest {
+                    topic: Some(None),
+                    ..Default::default()
+                },
+                "Topic cleared.",
+            );
+        }
+        ChannelAdminAction::Slowmode => {
+            let current = app
+                .channel_admin
+                .as_ref()
+                .and_then(|v| app.channel_by_id(&v.channel_id))
+                .and_then(|c| c.rate_limit_per_user)
+                .unwrap_or(0);
+            if let Some(view) = app.channel_admin.as_mut() {
+                view.input = Some(ChannelAdminInput::Slowmode(current.to_string()));
+            }
+        }
+        ChannelAdminAction::CopyId => {
+            let Some(view) = app.channel_admin.as_ref() else {
+                return;
+            };
+            let id = view.channel_id.clone();
+            app.dismiss_channel_admin();
+            let clipboard = crate::compose::copy_to_system_clipboard(&id);
+            app.cut_buffer = id;
+            app.set_status(if clipboard {
+                "Copied the channel id."
+            } else {
+                "Copied the channel id: no clipboard program, Alt+V pastes it."
+            });
+        }
+        ChannelAdminAction::Delete => {
+            if let Some(view) = app.channel_admin.as_mut() {
+                view.mode = ChannelAdminMode::ConfirmDelete;
+                // the cursor starts on "No": a deletion is permanent
+                view.selected = 1;
+            }
+        }
+    }
+}
+
+/// Enter on the channel menu's footer, once the text is typed.
+fn run_channel_admin_input(
+    app: &mut App,
+    client: &FluxerHttpClient,
+    event_tx: &UnboundedSender<AppEvent>,
+    input: crate::app::ChannelAdminInput,
+) {
+    use crate::api::types::{CreateGuildChannelRequest, ModifyGuildChannelRequest};
+    use crate::app::ChannelAdminInput;
+    let Some(view) = app.channel_admin.as_ref() else {
+        return;
+    };
+    let channel_id = view.channel_id.clone();
+    let guild_id = view.guild_id.clone();
+    match input {
+        ChannelAdminInput::NewName { channel_type, text } => {
+            let name = text.trim().to_string();
+            if name.is_empty() {
+                app.set_status("Give it a name.");
+                return;
+            }
+            // a channel made while the cursor is on a category goes into
+            // it; one made anywhere else goes beside that channel
+            let parent_id = app.channel_by_id(&channel_id).and_then(|c| {
+                if c.channel_type() == crate::api::types::CHANNEL_GUILD_CATEGORY {
+                    Some(c.id.clone())
+                } else {
+                    c.parent_id.clone()
+                }
+            });
+            app.dismiss_channel_admin();
+            app.set_status(format!("Making {name}…"));
+            spawn_create_channel(
+                client.clone(),
+                event_tx.clone(),
+                guild_id,
+                CreateGuildChannelRequest {
+                    channel_type,
+                    name,
+                    parent_id,
+                },
+            );
+        }
+        ChannelAdminInput::Rename(text) => {
+            let name = text.trim().to_string();
+            if name.is_empty() {
+                app.set_status("Give it a name.");
+                return;
+            }
+            app.dismiss_channel_admin();
+            app.set_status("Renaming…");
+            spawn_modify_channel(
+                client.clone(),
+                event_tx.clone(),
+                channel_id,
+                ModifyGuildChannelRequest {
+                    name: Some(name),
+                    ..Default::default()
+                },
+                "Renamed.",
+            );
+        }
+        ChannelAdminInput::Topic(text) => {
+            let topic = text.trim().to_string();
+            app.dismiss_channel_admin();
+            app.set_status("Setting the topic…");
+            spawn_modify_channel(
+                client.clone(),
+                event_tx.clone(),
+                channel_id,
+                ModifyGuildChannelRequest {
+                    // an empty line clears it, which is the null the
+                    // server wants rather than an empty string
+                    topic: Some(if topic.is_empty() { None } else { Some(topic) }),
+                    ..Default::default()
+                },
+                "Topic set.",
+            );
+        }
+        ChannelAdminInput::Slowmode(text) => {
+            let Ok(seconds) = text.trim().parse::<i64>() else {
+                app.set_status("Slowmode is a number of seconds.");
+                return;
+            };
+            if !(0..=21_600).contains(&seconds) {
+                app.set_status("Slowmode is between 0 and 21600 seconds (six hours).");
+                return;
+            }
+            app.dismiss_channel_admin();
+            app.set_status("Setting slowmode…");
+            spawn_modify_channel(
+                client.clone(),
+                event_tx.clone(),
+                channel_id,
+                ModifyGuildChannelRequest {
+                    rate_limit_per_user: Some(seconds),
+                    ..Default::default()
+                },
+                if seconds == 0 {
+                    "Slowmode off."
+                } else {
+                    "Slowmode set."
+                },
+            );
+        }
+    }
+}
+
 fn run_community_input(
     app: &mut App,
     client: &FluxerHttpClient,
@@ -4351,6 +4632,67 @@ fn spawn_close_channel(
             }
             Err(err) => {
                 let _ = event_tx.send(AppEvent::ApiError(format!("Failed to close it: {err}")));
+            }
+        }
+    });
+}
+
+/// Make a channel. The gateway's CHANNEL_CREATE puts it in the list, so
+/// there is nothing to apply here beyond saying it worked.
+fn spawn_create_channel(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    guild_id: String,
+    body: crate::api::types::CreateGuildChannelRequest,
+) {
+    tokio::spawn(async move {
+        match client.create_guild_channel(&guild_id, &body).await {
+            Ok(channel) => {
+                debug::log("channel", format!("created {}", channel.id));
+                let _ = event_tx.send(AppEvent::SetStatus(format!("#{} is there.", channel.name)));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to make it: {err}")));
+            }
+        }
+    });
+}
+
+/// Change a channel's name, topic or slowmode; CHANNEL_UPDATE brings the
+/// change back over the gateway.
+fn spawn_modify_channel(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    channel_id: String,
+    body: crate::api::types::ModifyGuildChannelRequest,
+    done: &str,
+) {
+    let done = done.to_string();
+    tokio::spawn(async move {
+        match client.modify_guild_channel(&channel_id, &body).await {
+            Ok(_) => {
+                let _ = event_tx.send(AppEvent::SetStatus(done));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to change it: {err}")));
+            }
+        }
+    });
+}
+
+fn spawn_delete_channel(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    channel_id: String,
+    name: String,
+) {
+    tokio::spawn(async move {
+        match client.delete_guild_channel(&channel_id).await {
+            Ok(()) => {
+                let _ = event_tx.send(AppEvent::SetStatus(format!("#{name} is gone.")));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!("Failed to delete it: {err}")));
             }
         }
     });

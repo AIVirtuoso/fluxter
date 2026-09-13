@@ -448,6 +448,9 @@ pub struct ChannelResponse {
     pub url: Option<String>,
     #[serde(default)]
     pub permission_overwrites: Vec<PermissionOverwrite>,
+    /// Slowmode: seconds a member must wait between messages.
+    #[serde(default)]
+    pub rate_limit_per_user: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1861,6 +1864,30 @@ pub struct GuildMemberSearchResponse {
     pub total_result_count: i64,
     #[serde(default)]
     pub indexing: bool,
+}
+/// The body of `POST /guilds/{id}/channels`. Every other field of a new
+/// channel takes its default, and a channel made inside a category
+/// inherits that category's overwrites.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CreateGuildChannelRequest {
+    #[serde(rename = "type")]
+    pub channel_type: i32,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+}
+
+/// The body of `PATCH /channels/{id}` for a guild channel. An omitted
+/// field keeps what is stored; `Some(None)` is the explicit null that
+/// clears a topic.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ModifyGuildChannelRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit_per_user: Option<i64>,
 }
 
 /// One entry of `GET /channels/{id}/messages/pins`: the message and when

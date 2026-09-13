@@ -1122,6 +1122,39 @@ says to sign the others out from the web client rather than offering a key
 that would fail. A session the server could not identify still appears, as
 "an unrecognised client", because a sign-in you do not recognise is the
 reason to look at all.
+## Looking after a channel
+
+**a** on the channel list opens the menu for the community channel the
+cursor is on. The web client puts this behind a right-click and a settings
+page; here it is the same list-and-cursor as the message menu.
+
+| Row | What it does |
+| --- | ------------ |
+| **Make a channel here** | Asks which kind -- text, voice, category or link -- then for a name. A channel made while the cursor is on a category goes into it, and one made anywhere else goes beside the channel the cursor is on, in the same category. |
+| **Rename this channel** | The current name is there to edit. A text channel's name is lowercased and hyphenated by the server unless the community has flexible names, so what you typed and what appears can differ. |
+| **Set the topic** | Up to 1,024 characters; the current one is there to edit. An empty line clears it. |
+| **Clear the topic** | Only offered when there is one. |
+| **Slowmode** | Seconds a member must wait between messages, 0 to 21,600 (six hours). **0** turns it off. |
+| **Copy the channel id** | The raw snowflake, to the clipboard and the cut buffer. |
+| **Delete this channel** | Asks a second time, with the cursor on **No**. |
+
+Only the rows your permissions allow are offered: everything but copying
+the id needs **Manage Channels**, so in a community where you have none
+the menu holds that one row. Copying works in a conversation too --
+everything else is community-only, and **a** says so there.
+
+**A deletion takes everything with it.** The channel record, every message
+in it, every file on those messages, its invites and its webhooks. There
+is no grace period and nothing to restore, which is why the second press
+starts on **No**.
+
+Where a community's **MFA level is elevated** and you do not own it,
+managing channels needs an enrolled authenticator on your account. This
+client cannot enrol one, so the server answers `TWO_FACTOR_REQUIRED` and
+the menu shows that as it came.
+
+The channel list redraws itself from the gateway, so a channel made,
+renamed or deleted -- here or in another client -- appears as it happens.
 
 ## Message formatting
 
@@ -1382,6 +1415,9 @@ close. The profile of a selected message's author is on **u** now.
 | ------------- | ----------------- |
 | **↑** / **k** | Previous channel. |
 | **↓** / **j** | Next channel.     |
+| **a**         | **Look after** the community channel the cursor is on: make a channel, rename, topic, slowmode, copy the id, delete (see "Looking after a channel"). |
+| **P**         | In the conversation list: keep the conversation at the top. |
+| **x**         | In the conversation list: close the conversation. |
 
 Changing channels marks read state for the new channel when applicable.
 
