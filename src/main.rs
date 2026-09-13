@@ -3125,12 +3125,7 @@ fn handle_key_event(
                     Focus::Servers | Focus::Channels | Focus::Messages
                 ) =>
         {
-            match app.toggle_member_list() {
-                Some((guild_id, channel_id)) => {
-                    send_member_list_subscription(gateway_cmd_tx, guild_id, channel_id);
-                }
-                None => app.set_status("Open a community's channel first."),
-            }
+            app.open_voice_menu();
         }
         // Alt+C = join, make, browse or leave a community
         KeyCode::Char('c') | KeyCode::Char('C')
@@ -3140,12 +3135,7 @@ fn handle_key_event(
                     Focus::Servers | Focus::Channels | Focus::Messages
                 ) =>
         {
-            match app.toggle_member_list() {
-                Some((guild_id, channel_id)) => {
-                    send_member_list_subscription(gateway_cmd_tx, guild_id, channel_id);
-                }
-                None => app.set_status("Open a community's channel first."),
-            }
+            app.open_communities();
         }
         // Alt+F = friends, requests and blocked accounts
         KeyCode::Char('f') | KeyCode::Char('F')
@@ -3340,8 +3330,6 @@ fn handle_key_event(
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
         {
             app.open_search();
-            app.open_communities();
-            app.open_voice_menu();
         }
         KeyCode::Char('[') if app.focus == Focus::Messages => {
             try_load_older_messages(app, client, event_tx);
@@ -5893,5 +5881,119 @@ mod key_tests {
         ));
         b.input_type('b');
         assert_eq!(b.input_text(), "a\nb");
+    }
+}
+
+/// Which overlay a key opens. Two merges pasted the member list's body
+/// into the voice and community arms and stacked three openers into the
+/// search arm, so Alt+V, Alt+C and / all did the wrong thing while the
+/// code around them still read correctly. These press the keys.
+#[cfg(test)]
+mod key_arm_tests {
+    use super::*;
+    use crate::api::types::{ChannelResponse, GuildResponse, UserPrivateResponse};
+    use crate::app::ServerSelection;
+
+    struct Harness {
+        app: App,
+        client: FluxerHttpClient,
+        event_tx: UnboundedSender<AppEvent>,
+        gateway_tx: UnboundedSender<GatewayCommand>,
+        config: AppConfig,
+        path: std::path::PathBuf,
+        _events: tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+        _commands: tokio::sync::mpsc::UnboundedReceiver<GatewayCommand>,
+    }
+
+    /// A community with one text channel open, so the keys that need one
+    /// have it.
+    fn harness() -> Harness {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: "me".into(),
+            ..Default::default()
+        };
+        let channel = ChannelResponse {
+            id: "c".into(),
+            kind: crate::api::types::CHANNEL_GUILD_TEXT,
+            name: "general".into(),
+            guild_id: Some("g".into()),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            Default::default(),
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            Some("c".into()),
+            Default::default(),
+        );
+        app.set_guild_channels("g", vec![channel]);
+        app.focus = Focus::Messages;
+        let (event_tx, _events) = tokio::sync::mpsc::unbounded_channel();
+        let (gateway_tx, _commands) = tokio::sync::mpsc::unbounded_channel();
+        Harness {
+            app,
+            client: FluxerHttpClient::new("https://example.invalid").unwrap(),
+            event_tx,
+            gateway_tx,
+            config: AppConfig::default(),
+            path: std::path::PathBuf::from("/nonexistent/config.toml"),
+            _events,
+            _commands,
+        }
+    }
+
+    fn press(h: &mut Harness, code: KeyCode, modifiers: KeyModifiers) {
+        handle_key_event(
+            &mut h.app,
+            KeyEvent::new(code, modifiers),
+            &h.client,
+            &h.event_tx,
+            &h.gateway_tx,
+            &h.path,
+            &mut h.config,
+        );
+    }
+
+    #[test]
+    fn alt_v_opens_the_voice_menu() {
+        let mut h = harness();
+        press(&mut h, KeyCode::Char('v'), KeyModifiers::ALT);
+        assert!(h.app.voice_menu.is_some());
+        assert!(h.app.member_list.is_none());
+    }
+
+    #[test]
+    fn alt_c_opens_the_community_menu() {
+        let mut h = harness();
+        press(&mut h, KeyCode::Char('c'), KeyModifiers::ALT);
+        assert!(h.app.community.is_some());
+        assert!(h.app.member_list.is_none());
+    }
+
+    #[test]
+    fn slash_opens_the_search_and_nothing_else() {
+        let mut h = harness();
+        press(&mut h, KeyCode::Char('/'), KeyModifiers::NONE);
+        assert!(h.app.search.is_some());
+        assert!(h.app.community.is_none());
+        assert!(h.app.voice_menu.is_none());
+    }
+
+    #[test]
+    fn alt_m_still_opens_the_member_list() {
+        let mut h = harness();
+        press(&mut h, KeyCode::Char('m'), KeyModifiers::ALT);
+        assert!(h.app.member_list.is_some());
+        assert!(h.app.voice_menu.is_none());
+        assert!(h.app.community.is_none());
     }
 }
