@@ -2012,23 +2012,11 @@ fn handle_key_event(
                     });
                 }
             }
+            // x asks first: every message that used it loses it
             KeyCode::Char('x') | KeyCode::Delete
                 if app.community_selected_expression().is_some() =>
             {
-                if let (Some((id, name, _)), Some((guild_id, stickers))) = (
-                    app.community_selected_expression(),
-                    app.community_expressions(),
-                ) {
-                    app.set_status(format!("Deleting {name}…"));
-                    spawn_delete_expression(
-                        client.clone(),
-                        event_tx.clone(),
-                        guild_id,
-                        stickers,
-                        id,
-                        name,
-                    );
-                }
+                app.ask_expression_delete();
             }
             KeyCode::Char('+') => {
                 // a new invite is always to the channel now open, which
@@ -3713,6 +3701,22 @@ fn run_community_action(
     client: &FluxerHttpClient,
     event_tx: &UnboundedSender<AppEvent>,
 ) {
+    // the deletion question: Enter on "Yes" deletes, on "No" goes back
+    if let Some((guild_id, stickers, id, name, yes)) = app.community_expression_delete_choice() {
+        app.community_back();
+        if yes {
+            app.set_status(format!("Deleting {name}…"));
+            spawn_delete_expression(
+                client.clone(),
+                event_tx.clone(),
+                guild_id,
+                stickers,
+                id,
+                name,
+            );
+        }
+        return;
+    }
     // the invite preview: Enter takes it
     if let Some(invite) = app.previewed_invite() {
         let where_ = invite.destination();
@@ -3981,12 +3985,27 @@ fn run_community_input(
                 return;
             }
             let data_uri = crate::media::data_uri_for_file(&path, &bytes);
-            // the file's own name is the obvious name for it
+            // the file's own name is the obvious name for it; an emoji
+            // name is letters, digits and underscores, so anything else
+            // in it becomes an underscore
             let stem = path
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_string();
+            let stem = if stickers {
+                stem
+            } else {
+                stem.chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect()
+            };
             if let Some(view) = app.community.as_mut() {
                 view.input = Some(crate::app::CommunityInput::ExpressionName {
                     stickers,
@@ -4004,8 +4023,8 @@ fn run_community_input(
                 return;
             };
             let name = text.trim().to_string();
-            if name.len() < 2 {
-                app.set_status("A name is at least two characters.");
+            if let Some(problem) = expression_name_problem(stickers, &name) {
+                app.set_status(problem);
                 return;
             }
             if let Some(view) = app.community.as_mut() {
@@ -4026,8 +4045,8 @@ fn run_community_input(
                 return;
             };
             let name = text.trim().to_string();
-            if name.len() < 2 {
-                app.set_status("A name is at least two characters.");
+            if let Some(problem) = expression_name_problem(stickers, &name) {
+                app.set_status(problem);
                 return;
             }
             if let Some(view) = app.community.as_mut() {
@@ -4314,6 +4333,42 @@ fn spawn_close_channel(
             }
         }
     });
+}
+
+/// The server's rules for a name, so the footer can say what is wrong
+/// before the request goes: an emoji is 2 to 32 ASCII letters, digits
+/// and underscores, a sticker 2 to 30 characters of anything.
+fn expression_name_problem(stickers: bool, name: &str) -> Option<&'static str> {
+    let len = name.chars().count();
+    if stickers {
+        (!(2..=30).contains(&len)).then_some("A sticker name is 2 to 30 characters.")
+    } else if !(2..=32).contains(&len)
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        Some("An emoji name is 2 to 32 letters, digits and underscores.")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod expression_name_tests {
+    use super::expression_name_problem;
+
+    #[test]
+    fn an_emoji_name_is_ascii_letters_digits_and_underscores() {
+        assert!(expression_name_problem(false, "party_cat2").is_none());
+        assert!(expression_name_problem(false, "party-cat").is_some());
+        assert!(expression_name_problem(false, "x").is_some());
+        assert!(expression_name_problem(false, &"a".repeat(33)).is_some());
+    }
+
+    #[test]
+    fn a_sticker_name_only_has_a_length() {
+        assert!(expression_name_problem(true, "party cat!").is_none());
+        assert!(expression_name_problem(true, "x").is_some());
+        assert!(expression_name_problem(true, &"a".repeat(31)).is_some());
+    }
 }
 
 /// Add an emoji or a sticker. GUILD_EMOJIS_UPDATE and

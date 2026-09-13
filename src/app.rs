@@ -1008,6 +1008,14 @@ pub enum CommunityMode {
     /// A community's emoji or its stickers, to add, rename or delete one.
     /// Both come from READY, so there is nothing to load.
     Expressions { guild_id: String, stickers: bool },
+    /// The second press an emoji or sticker deletion asks for: every
+    /// message that used it loses it.
+    ConfirmExpressionDelete {
+        guild_id: String,
+        stickers: bool,
+        id: String,
+        name: String,
+    },
     /// What an invite leads to, looked up before it is taken, so nobody
     /// joins something they cannot see the name of.
     Preview { code: String, state: PreviewState },
@@ -6243,6 +6251,7 @@ impl App {
             Some(CommunityMode::Expressions { guild_id, stickers }) => {
                 self.expression_rows(guild_id, *stickers).len()
             }
+            Some(CommunityMode::ConfirmExpressionDelete { .. }) => 2,
             // nothing to move through while it is still coming, and the
             // preview is one thing rather than a list
             _ => 0,
@@ -7193,6 +7202,51 @@ impl App {
             .cloned()
     }
 
+    /// x on an emoji or sticker: ask, with the cursor on "No", since every
+    /// message that used it loses it. False when nothing is under the
+    /// cursor.
+    pub fn ask_expression_delete(&mut self) -> bool {
+        let Some((guild_id, stickers)) = self.community_expressions() else {
+            return false;
+        };
+        let Some((id, name, _)) = self.community_selected_expression() else {
+            return false;
+        };
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::ConfirmExpressionDelete {
+                guild_id,
+                stickers,
+                id,
+                name,
+            };
+            view.selected = 1;
+        }
+        true
+    }
+
+    /// The deletion being asked about, and whether the cursor is on "Yes":
+    /// (community, stickers, id, name, yes).
+    pub fn community_expression_delete_choice(
+        &self,
+    ) -> Option<(String, bool, String, String, bool)> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::ConfirmExpressionDelete {
+                guild_id,
+                stickers,
+                id,
+                name,
+            } => Some((
+                guild_id.clone(),
+                *stickers,
+                id.clone(),
+                name.clone(),
+                view.selected == 0,
+            )),
+            _ => None,
+        }
+    }
+
     /// Step back out of a list the menu led to, or close it.
     pub fn community_back(&mut self) {
         let Some(view) = &mut self.community else {
@@ -7200,6 +7254,18 @@ impl App {
         };
         if view.input.is_some() {
             view.input = None;
+            return;
+        }
+        // out of the deletion question, back onto the list
+        if let CommunityMode::ConfirmExpressionDelete {
+            guild_id, stickers, ..
+        } = &view.mode
+        {
+            view.mode = CommunityMode::Expressions {
+                guild_id: guild_id.clone(),
+                stickers: *stickers,
+            };
+            view.selected = 0;
             return;
         }
         if matches!(view.mode, CommunityMode::Menu) {
@@ -11083,6 +11149,29 @@ mod expression_tests {
             .collect();
         assert_eq!(names, ["Apple", "zebra"]);
         assert_eq!(app.expression_rows("g", true).len(), 1);
+    }
+
+    /// x asks with the cursor on "No", and Esc goes back to the same list.
+    #[test]
+    fn deleting_an_expression_asks_first() {
+        let mut app = app_with(crate::permissions::MANAGE_EXPRESSIONS);
+        app.open_communities();
+        app.open_guild_expressions("g".into(), true);
+        assert!(app.ask_expression_delete());
+        assert_eq!(app.community_len(), 2);
+        assert_eq!(
+            app.community_expression_delete_choice()
+                .map(|(_, stickers, id, _, yes)| (stickers, id, yes)),
+            Some((true, "s1".to_string(), false))
+        );
+        app.community_move(-1);
+        assert!(
+            app.community_expression_delete_choice()
+                .is_some_and(|(_, _, _, _, yes)| yes)
+        );
+        app.community_back();
+        assert_eq!(app.community_expressions(), Some(("g".to_string(), true)));
+        assert_eq!(app.community_len(), 1);
     }
 
     #[test]

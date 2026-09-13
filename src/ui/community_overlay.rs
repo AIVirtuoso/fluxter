@@ -279,6 +279,43 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     .to_string(),
             )
         }
+        CommunityMode::ConfirmExpressionDelete { name, stickers, .. } => {
+            let what = if *stickers { "sticker" } else { "emoji" };
+            let rows = [
+                (
+                    format!("Yes, delete the {what} {name}; every message that used it loses it"),
+                    true,
+                ),
+                ("No, leave it alone".to_string(), false),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (label, danger))| {
+                let selected = index == view.selected;
+                let style = if danger {
+                    Style::default().fg(crate::ui::theme::danger())
+                } else {
+                    text
+                };
+                Line::from(vec![
+                    Span::styled(if selected { " \u{25B8} " } else { "   " }, accent),
+                    Span::styled(
+                        label,
+                        if selected {
+                            style.add_modifier(Modifier::BOLD)
+                        } else {
+                            style
+                        },
+                    ),
+                ])
+            })
+            .collect();
+            (
+                format!(" Delete {name}? "),
+                rows,
+                "\u{2191}/\u{2193} move  \u{b7}  Enter choose  \u{b7}  Esc back".to_string(),
+            )
+        }
         CommunityMode::Expressions { guild_id, stickers } => {
             let name = app
                 .guilds
