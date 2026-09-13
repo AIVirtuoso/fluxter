@@ -152,6 +152,22 @@ impl FluxerHttpClient {
         .await
     }
 
+    /// Write the private note about somebody, or clear it with None. The
+    /// note is the reader's own and nobody else ever sees it.
+    pub async fn set_user_note(&self, target_id: &str, note: Option<&str>) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            note: Option<&'a str>,
+        }
+        self.send_empty(
+            Method::PUT,
+            &format!("/users/@me/notes/{target_id}"),
+            Some(&Body { note }),
+            "save the note",
+        )
+        .await
+    }
+
     pub async fn current_user_settings(&self) -> Result<UserSettingsResponse> {
         self.send_json::<(), (), UserSettingsResponse>(
             Method::GET,

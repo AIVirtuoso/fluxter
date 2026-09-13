@@ -563,6 +563,7 @@ pub fn apply_event(
                     if !ready.read_state.is_empty() {
                         app.set_read_states(ready.read_state);
                     }
+                    app.set_notes(ready.notes);
                     app.gateway_lazy_guild_id = None;
                     app.gateway_ready_seen = true;
                 }
@@ -919,6 +920,19 @@ pub fn apply_event(
                     {
                         effects.reload_pins = Some(event.channel_id);
                     }
+                }
+            }
+            // the reader wrote or cleared a private note, here or in
+            // another client
+            "USER_NOTE_UPDATE" => {
+                #[derive(serde::Deserialize)]
+                struct NoteUpdate {
+                    id: String,
+                    #[serde(default)]
+                    note: String,
+                }
+                if let Some(event) = read::<NoteUpdate>(&kind, payload) {
+                    app.set_note(event.id, event.note);
                 }
             }
             "SAVED_MESSAGE_CREATE" => {
