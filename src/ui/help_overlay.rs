@@ -103,6 +103,8 @@ Messages
            remove one file from it, delete the marked messages, report it, and --
            with the permissions for them -- time the author out, lift their
            timeout, remove them from the community or ban them.
+           remove one file from it, delete the marked messages, report it, give the
+           author a role or take one off them.
            ↑/↓ move, Enter chooses, Esc steps back out of a list or closes.
            The keys below are the same things without the menu.
   y or Ctrl+C - copy the selected message: its text and the links of its files, to

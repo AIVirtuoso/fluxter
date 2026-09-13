@@ -573,6 +573,27 @@ pub struct GuildRoleResponse {
     pub color: u32,
     #[serde(default, deserialize_with = "deserialize_i32_flex")]
     pub position: i32,
+    /// Whether members holding it are shown as their own member list
+    /// group.
+    #[serde(default)]
+    pub hoist: bool,
+    /// Whether a member without MENTION_EVERYONE can mention it.
+    #[serde(default)]
+    pub mentionable: bool,
+}
+
+/// The body of `PATCH /guilds/{id}/roles/{role}`. An omitted field keeps
+/// what is stored.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ModifyGuildRoleRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hoist: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mentionable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Hash)]

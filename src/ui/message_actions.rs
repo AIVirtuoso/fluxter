@@ -69,6 +69,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 .collect(),
             "↑/↓ move  ·  Enter start the timeout  ·  Esc back",
         ),
+        MessageActionsMode::MemberRoles { give, items } => (
+            if *give {
+                " Which role? "
+            } else {
+                " Take which role off? "
+            },
+            items
+                .iter()
+                .map(|(_, name)| (name.clone(), String::new(), false))
+                .collect(),
+            "↑/↓ move  ·  Enter choose  ·  Esc back",
+        ),
         MessageActionsMode::Confirm(action) => (
             " Are you sure? ",
             vec![

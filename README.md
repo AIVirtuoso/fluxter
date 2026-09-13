@@ -972,6 +972,8 @@ row, and those work straight from the message pane without the menu.
 | Lift the author's timeout | | Offered instead of the row above while their timeout is still running. |
 | Remove the author from the community | | A kick: they lose their nickname, roles and guild profile, and may come back through an invite. Asks a second time. Needs **Kick Members**. |
 | Ban the author from the community | | Permanent, deletes none of their messages, and also blocks the address and the account email the ban records. Asks a second time. Needs **Ban Members**. |
+| Give the author a role | | Lists the roles they have not got; **Enter** gives one. Needs **Manage Roles**. |
+| Take a role off the author | | Lists the roles they hold; **Enter** takes one back. Needs **Manage Roles**. |
 
 Pins, bookmarks, bulk deletes and cleared reactions arrive over the
 gateway as well, so a change made in another client shows here without a
@@ -1020,6 +1022,31 @@ Where a community's **MFA level is elevated** and you do not own it, a
 timeout, a kick and a ban each need an enrolled authenticator on your
 account. This client cannot enrol one, so the server answers
 `TWO_FACTOR_REQUIRED` and the status line shows that as it came.
+### Roles
+
+The community menu (**Alt+C**) has the roles of the community you are in:
+every role highest first, each drawn in its own colour, with `·shown
+apart` on the ones whose members are their own group in the member list
+and `·mentionable` on the ones anybody may mention.
+
+A new role is made with **+** and starts where the server puts it -- at
+the bottom of the hierarchy, with the permissions the everyone role has
+and nothing else. **r** renames, **h** and **m** toggle those two marks,
+**x** asks and then deletes: every member loses the role and it does not
+come back, so the question starts on "No". The everyone role is in the
+list because its colour and its permissions are real, but it is every
+member's and none of those keys touch it.
+
+Giving a role to somebody is in the message menu instead, since that is
+where a person is in front of you: **Give the author a role** lists what
+they have not got and **Take a role off the author** what they hold. The
+everyone role is on neither list, being nobody's to give.
+
+Roles redraw from the gateway -- GUILD_ROLE_CREATE, _UPDATE and _DELETE --
+so a change made here or in another client appears as it happens. What
+this client does not do is **reorder** roles or **edit their
+permissions**: the hierarchy and the permission masks are where a mistake
+is expensive and a single number is no way to show sixty-odd bits.
 
 ## Searching
 
@@ -1118,6 +1145,7 @@ first three are always there, the last two only inside a community.
 | **Invites to this community** | Every invite you may see. **y** copies its link, **+** makes one to the channel now open, **x** revokes. |
 | **Report this community** | A report about the community itself, with its own nine categories. Not offered for one you own, which the server refuses anyway. |
 | **Banned accounts** | Every ban of the community: who, permanent or until when, and why. **x** lifts one, **R** reloads. Needs **Ban Members**. |
+| **Roles in this community** | Every role, highest first, each in its own colour. **+** makes one, **r** renames, **h** shows its members as their own group in the member list, **m** lets anybody mention it, **x** deletes it after asking. Needs **Manage Roles**. |
 | **Leave this community** | Leaves it. A community you own cannot be left, and the client says so rather than sending a call the server would refuse. |
 
 ### An invite is looked up before it is taken
@@ -1417,6 +1445,7 @@ close. The profile of a selected message's author is on **u** now.
 | **Alt+G**               | Look after the **group** now open: rename it, add somebody, take somebody out, leave it.                                                                                                                                                                |
 
 | **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites or its banned accounts, or leave it (see "Communities and invites").                                                                                                        |
+| **Alt+C**               | **Communities**: join with an invite, make one, browse the directory, list this community's invites or its roles, or leave it (see "Communities and invites").                                                                                                        |
 
 | **Alt+V**               | **Voice**: join the open voice channel, ring a conversation, answer or turn down a call, mute, deafen, leave (see "Voice").                                                                                                                             |
 | **F1**                  | **Keybindings** overlay - **↑** / **↓** / **PgUp** / **PgDn** scroll when it does not fit (**Esc** / **Enter** / **q** to close).                                                                                                                        |

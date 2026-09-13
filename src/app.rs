@@ -1009,6 +1009,14 @@ pub enum CommunityMode {
     ReportCategories { guild_id: String },
     /// A community's bans, so one can be lifted.
     Bans { guild_id: String, state: BansState },
+    /// A community's roles, to make, rename, hoist or delete one.
+    Roles { guild_id: String },
+    /// The second press a role deletion asks for: every member loses it.
+    ConfirmRoleDelete {
+        guild_id: String,
+        role_id: String,
+        name: String,
+    },
     /// What an invite leads to, looked up before it is taken, so nobody
     /// joins something they cannot see the name of.
     Preview { code: String, state: PreviewState },
@@ -1051,18 +1059,24 @@ pub enum CommunityInput {
     NewName(String),
     /// What to search the directory for.
     Search(String),
+    /// The name of a role to make.
+    NewRole(String),
+    /// A new name for the role under the cursor.
+    RenameRole { role_id: String, text: String },
 }
 
 impl CommunityInput {
     pub fn text(&self) -> &str {
         match self {
-            Self::JoinCode(t) | Self::NewName(t) | Self::Search(t) => t,
+            Self::JoinCode(t) | Self::NewName(t) | Self::Search(t) | Self::NewRole(t) => t,
+            Self::RenameRole { text, .. } => text,
         }
     }
 
     pub fn text_mut(&mut self) -> &mut String {
         match self {
-            Self::JoinCode(t) | Self::NewName(t) | Self::Search(t) => t,
+            Self::JoinCode(t) | Self::NewName(t) | Self::Search(t) | Self::NewRole(t) => t,
+            Self::RenameRole { text, .. } => text,
         }
     }
 
@@ -1071,6 +1085,8 @@ impl CommunityInput {
             Self::JoinCode(_) => "Invite code or link",
             Self::NewName(_) => "Name it",
             Self::Search(_) => "Look for",
+            Self::NewRole(_) => "Name for the new role",
+            Self::RenameRole { .. } => "New name for the role",
         }
     }
 }
@@ -1160,6 +1176,10 @@ pub enum MessageAction {
     ClearTimeout,
     Kick,
     Ban,
+    /// Giving the author a role, or taking one back: the list of roles
+    /// comes next.
+    GiveRole,
+    TakeRole,
 }
 
 impl MessageAction {
@@ -1194,6 +1214,8 @@ impl MessageAction {
             Self::ClearTimeout => "Lift the author's timeout",
             Self::Kick => "Remove the author from the community",
             Self::Ban => "Ban the author from the community",
+            Self::GiveRole => "Give the author a role",
+            Self::TakeRole => "Take a role off the author",
         }
     }
 
@@ -1246,6 +1268,11 @@ pub enum MessageActionsMode {
     UserReportCategories,
     /// How long to time the author out for.
     TimeoutDurations,
+    /// Which role to give the author or take off them: (role id, name).
+    MemberRoles {
+        give: bool,
+        items: Vec<(String, String)>,
+    },
     /// A destructive action waiting for a second press.
     Confirm(MessageAction),
 }
@@ -1633,6 +1660,7 @@ pub enum CommunityAction {
     Invites,
     Report,
     Bans,
+    Roles,
     Leave,
 }
 
@@ -1645,6 +1673,7 @@ impl CommunityAction {
             Self::Invites => "Invites to this community",
             Self::Report => "Report this community",
             Self::Bans => "Banned accounts",
+            Self::Roles => "Roles in this community",
             Self::Leave => "Leave this community",
         }
     }
@@ -6474,6 +6503,7 @@ impl App {
             out.push(MessageAction::ReportUser);
         }
         out.extend(self.moderation_actions_for(msg));
+        out.extend(self.role_actions_for(msg));
         out
     }
 
@@ -6514,6 +6544,60 @@ impl App {
         out
     }
 
+    /// Giving the author a role and taking one back, with MANAGE_ROLES in
+    /// the community. The server decides whether the reader stands above
+    /// the role itself.
+    fn role_actions_for(&self, msg: &MessageResponse) -> Vec<MessageAction> {
+        let mut out = Vec::new();
+        let Some(guild_id) = self.guild_id_for_active_channel() else {
+            return out;
+        };
+        if msg.author.id == self.me.id {
+            return out;
+        }
+        let owner = self
+            .guilds
+            .iter()
+            .find(|g| g.id == guild_id)
+            .map(|g| g.owner_id.as_str())
+            .unwrap_or_default();
+        if msg.author.id == owner {
+            return out;
+        }
+        let perms = self.active_channel_permissions();
+        if perms & crate::permissions::MODERATE_MEMBERS != 0 {
+            if self.member_timed_out(&guild_id, &msg.author.id) {
+                out.push(MessageAction::ClearTimeout);
+            } else {
+                out.push(MessageAction::Timeout);
+            }
+        }
+        if perms & crate::permissions::KICK_MEMBERS != 0 {
+            out.push(MessageAction::Kick);
+        }
+        if perms & crate::permissions::BAN_MEMBERS != 0 {
+            out.push(MessageAction::Ban);
+        }
+        if self.guild_permissions(&guild_id) & crate::permissions::MANAGE_ROLES == 0 {
+            return out;
+        }
+        let held = self.member_role_ids(&guild_id, &msg.author.id);
+        // the everyone role is every member's and cannot be given or
+        // taken, so it is not counted on either side
+        let assignable = self
+            .roles_for_list(&guild_id)
+            .into_iter()
+            .filter(|r| r.id != guild_id)
+            .count();
+        if held.len() < assignable {
+            out.push(MessageAction::GiveRole);
+        }
+        if !held.is_empty() {
+            out.push(MessageAction::TakeRole);
+        }
+        out
+    }
+
     /// Whether a member's communication timeout is still in the future,
     /// which is what decides between offering one and lifting one.
     pub fn member_timed_out(&self, guild_id: &str, user_id: &str) -> bool {
@@ -6529,6 +6613,34 @@ impl App {
         until
             .parse::<chrono::DateTime<chrono::Utc>>()
             .is_ok_and(|t| t > chrono::Utc::now())
+    }
+    /// The roles a member holds, the everyone role left out.
+    pub fn member_role_ids(&self, guild_id: &str, user_id: &str) -> Vec<String> {
+        self.guild_members
+            .get(guild_id)
+            .and_then(|members| members.iter().find(|m| m.user.id == user_id))
+            .map(|m| {
+                m.roles
+                    .iter()
+                    .filter(|id| *id != guild_id)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The rows of the role list a give or a take offers: every role the
+    /// member does not hold, or every one they do.
+    fn member_role_choices(&self, user_id: &str, give: bool) -> Vec<(String, String)> {
+        let Some(guild_id) = self.guild_id_for_active_channel() else {
+            return Vec::new();
+        };
+        let held = self.member_role_ids(&guild_id, user_id);
+        self.roles_for_list(&guild_id)
+            .into_iter()
+            .filter(|role| role.id != guild_id && held.contains(&role.id) != give)
+            .map(|role| (role.id, role.name))
+            .collect()
     }
 
     /// Which rows the menu offers. The two that act on a community are
@@ -6552,6 +6664,9 @@ impl App {
             }
             if self.guild_permissions(&guild_id) & crate::permissions::BAN_MEMBERS != 0 {
                 out.push(CommunityAction::Bans);
+            }
+            if self.guild_permissions(&guild_id) & crate::permissions::MANAGE_ROLES != 0 {
+                out.push(CommunityAction::Roles);
             }
             out.push(CommunityAction::Leave);
         }
@@ -6909,6 +7024,13 @@ impl App {
     pub fn dismiss_channel_admin(&mut self) {
         self.channel_admin = None;
     }
+    /// A community's roles, highest first, with the everyone role last:
+    /// the order the web client lists them in.
+    pub fn roles_for_list(&self, guild_id: &str) -> Vec<crate::api::types::GuildRoleResponse> {
+        let mut roles = self.guild_roles.get(guild_id).cloned().unwrap_or_default();
+        roles.sort_by(|a, b| b.position.cmp(&a.position).then(a.name.cmp(&b.name)));
+        roles
+    }
 
     pub fn open_message_actions(&mut self) -> bool {
         let Some(msg) = self.selected_message() else {
@@ -6939,6 +7061,7 @@ impl App {
                 MessageActionsMode::ReportCategories => REPORT_CATEGORIES.len(),
                 MessageActionsMode::UserReportCategories => USER_REPORT_CATEGORIES.len(),
                 MessageActionsMode::TimeoutDurations => TIMEOUT_DURATIONS.len(),
+                MessageActionsMode::MemberRoles { items, .. } => items.len(),
                 MessageActionsMode::Confirm(_) => 2,
             },
         }
@@ -6971,6 +7094,9 @@ impl App {
                 state: BansState::Ready(bans),
                 ..
             }) => bans.len(),
+            // the roles are already in hand: READY carries them
+            Some(CommunityMode::Roles { guild_id }) => self.roles_for_list(guild_id).len(),
+            Some(CommunityMode::ConfirmRoleDelete { .. }) => 2,
             // nothing to move through while it is still coming, and the
             // preview is one thing rather than a list
             _ => 0,
@@ -7194,6 +7320,21 @@ impl App {
                     argument: Some(seconds.to_string()),
                 })
             }
+            MessageActionsMode::MemberRoles { give, items } => {
+                let give = *give;
+                let role_id = items.get(view.selected)?.0.clone();
+                self.message_actions = None;
+                Some(MessageActionOutcome::Run {
+                    action: if give {
+                        MessageAction::GiveRole
+                    } else {
+                        MessageAction::TakeRole
+                    },
+                    channel_id,
+                    message_id,
+                    argument: Some(role_id),
+                })
+            }
             MessageActionsMode::ReportCategories => {
                 let category = REPORT_CATEGORIES.get(view.selected)?.0.to_string();
                 self.message_actions = None;
@@ -7220,6 +7361,21 @@ impl App {
                     if let Some(view) = &mut self.message_actions {
                         view.mode = MessageActionsMode::Confirm(action);
                         view.selected = 1;
+                    }
+                    return None;
+                }
+                if action == MessageAction::GiveRole || action == MessageAction::TakeRole {
+                    let give = action == MessageAction::GiveRole;
+                    let author = self.message_by_id(&channel_id, &message_id)?.author.id;
+                    let items = self.member_role_choices(&author, give);
+                    if items.is_empty() {
+                        self.message_actions = None;
+                        self.set_status("No role to do that with.");
+                        return None;
+                    }
+                    if let Some(view) = &mut self.message_actions {
+                        view.mode = MessageActionsMode::MemberRoles { give, items };
+                        view.selected = 0;
                     }
                     return None;
                 }
@@ -7910,6 +8066,12 @@ impl App {
             view.selected = 0;
         }
     }
+    pub fn open_guild_roles(&mut self, guild_id: String) {
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::Roles { guild_id };
+            view.selected = 0;
+        }
+    }
 
     /// The community a report is being filed about, and the category the
     /// cursor is on.
@@ -7923,6 +8085,72 @@ impl App {
             _ => None,
         }
     }
+    /// The community whose roles are on screen.
+    pub fn community_roles_guild(&self) -> Option<String> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::Roles { guild_id } => Some(guild_id.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn community_selected_role(&self) -> Option<crate::api::types::GuildRoleResponse> {
+        let view = self.community.as_ref()?;
+        let guild_id = self.community_roles_guild()?;
+        self.roles_for_list(&guild_id).get(view.selected).cloned()
+    }
+
+    /// Whether the role under the cursor is the everyone role, which is
+    /// every member's and cannot be renamed, shown apart or deleted.
+    pub fn community_selected_role_is_everyone(&self) -> bool {
+        match (self.community_roles_guild(), self.community_selected_role()) {
+            (Some(guild_id), Some(role)) => role.id == guild_id,
+            _ => false,
+        }
+    }
+
+    /// x on a role: ask, with the cursor on "No", since every member loses
+    /// it and it does not come back. False when there is no role under the
+    /// cursor or it is the everyone role.
+    pub fn ask_role_delete(&mut self) -> bool {
+        let Some(guild_id) = self.community_roles_guild() else {
+            return false;
+        };
+        let Some(role) = self.community_selected_role() else {
+            return false;
+        };
+        if role.id == guild_id {
+            return false;
+        }
+        if let Some(view) = &mut self.community {
+            view.mode = CommunityMode::ConfirmRoleDelete {
+                guild_id,
+                role_id: role.id,
+                name: role.name,
+            };
+            view.selected = 1;
+        }
+        true
+    }
+
+    /// The deletion being asked about, and whether the cursor is on "Yes":
+    /// (community, role, name, yes).
+    pub fn community_role_delete_choice(&self) -> Option<(String, String, String, bool)> {
+        let view = self.community.as_ref()?;
+        match &view.mode {
+            CommunityMode::ConfirmRoleDelete {
+                guild_id,
+                role_id,
+                name,
+            } => Some((
+                guild_id.clone(),
+                role_id.clone(),
+                name.clone(),
+                view.selected == 0,
+            )),
+            _ => None,
+        }
+    }
 
     /// Step back out of a list the menu led to, or close it.
     pub fn community_back(&mut self) {
@@ -7931,6 +8159,14 @@ impl App {
         };
         if view.input.is_some() {
             view.input = None;
+            return;
+        }
+        // out of the deletion question, back onto the list
+        if let CommunityMode::ConfirmRoleDelete { guild_id, .. } = &view.mode {
+            view.mode = CommunityMode::Roles {
+                guild_id: guild_id.clone(),
+            };
+            view.selected = 0;
             return;
         }
         if matches!(view.mode, CommunityMode::Menu) {
@@ -12158,5 +12394,215 @@ mod moderation_tests {
             Some("other".into())
         );
         assert_eq!(app.community_bans_guild().as_deref(), Some("g"));
+    }
+}
+
+/// The roles list and the two rows that move a role on and off a member.
+#[cfg(test)]
+mod role_tests {
+    use super::*;
+    use crate::api::types::{
+        CHANNEL_GUILD_TEXT, ChannelResponse, GuildMemberResponse, GuildResponse, GuildRoleResponse,
+        MessageResponse, UserPartialResponse, UserPrivateResponse, WellKnownFluxerResponse,
+    };
+
+    fn user(id: &str) -> UserPartialResponse {
+        UserPartialResponse {
+            id: id.into(),
+            username: id.into(),
+            discriminator: "0001".into(),
+            ..Default::default()
+        }
+    }
+
+    fn role(id: &str, name: &str, position: i32) -> GuildRoleResponse {
+        GuildRoleResponse {
+            id: id.into(),
+            name: name.into(),
+            position,
+            ..Default::default()
+        }
+    }
+
+    fn app_with(permissions: u64, bob_roles: Vec<String>) -> App {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "ours".into(),
+            owner_id: "olive".into(),
+            permissions: Some(permissions.to_string()),
+            ..Default::default()
+        };
+        let channel = ChannelResponse {
+            id: "c".into(),
+            kind: CHANNEL_GUILD_TEXT,
+            name: "general".into(),
+            guild_id: Some("g".into()),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            WellKnownFluxerResponse::default(),
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            Some("c".into()),
+            UiSettings::default(),
+        );
+        app.set_guild_channels("g", vec![channel]);
+        app.guild_roles.insert(
+            "g".into(),
+            vec![
+                // the everyone role carries the community's own id
+                role("g", "@everyone", 0),
+                role("r1", "Crew", 1),
+                role("r2", "Moderator", 2),
+            ],
+        );
+        app.guild_members.insert(
+            "g".into(),
+            vec![GuildMemberResponse {
+                user: user("bob"),
+                roles: bob_roles,
+                ..Default::default()
+            }],
+        );
+        app
+    }
+
+    fn message() -> MessageResponse {
+        MessageResponse {
+            id: "1".into(),
+            channel_id: "c".into(),
+            author: user("bob"),
+            content: "hello".into(),
+            timestamp: "2026-09-12T10:00:00.000Z".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_highest_role_comes_first_and_everyone_is_counted_apart() {
+        let app = app_with(crate::permissions::MANAGE_ROLES, vec![]);
+        let names: Vec<String> = app
+            .roles_for_list("g")
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        assert_eq!(names, ["Moderator", "Crew", "@everyone"]);
+        assert_eq!(app.member_role_ids("g", "bob"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_rows_need_manage_roles() {
+        let app = app_with(crate::permissions::VIEW_CHANNEL, vec![]);
+        let rows = app.message_actions_for(&message());
+        assert!(!rows.contains(&MessageAction::GiveRole));
+        assert!(!rows.contains(&MessageAction::TakeRole));
+    }
+
+    /// A member with none of the roles is only offered a give; one with
+    /// all of them only a take.
+    #[test]
+    fn each_row_appears_only_when_it_can_do_something() {
+        let app = app_with(crate::permissions::MANAGE_ROLES, vec![]);
+        let rows = app.message_actions_for(&message());
+        assert!(rows.contains(&MessageAction::GiveRole));
+        assert!(!rows.contains(&MessageAction::TakeRole));
+
+        let app = app_with(
+            crate::permissions::MANAGE_ROLES,
+            vec!["r1".into(), "r2".into(), "g".into()],
+        );
+        let rows = app.message_actions_for(&message());
+        assert!(!rows.contains(&MessageAction::GiveRole));
+        assert!(rows.contains(&MessageAction::TakeRole));
+    }
+
+    #[test]
+    fn the_list_offers_what_the_member_has_not_got_and_hands_back_its_id() {
+        let mut app = app_with(crate::permissions::MANAGE_ROLES, vec!["r1".into()]);
+        app.upsert_message(message());
+        app.selected_message_index = Some(0);
+        assert!(app.open_message_actions());
+        let index = app
+            .message_actions
+            .as_ref()
+            .unwrap()
+            .actions
+            .iter()
+            .position(|a| *a == MessageAction::GiveRole)
+            .unwrap();
+        if let Some(view) = app.message_actions.as_mut() {
+            view.selected = index;
+        }
+        assert!(app.message_actions_confirm().is_none());
+        let MessageActionsMode::MemberRoles { give, items } =
+            app.message_actions.as_ref().unwrap().mode.clone()
+        else {
+            panic!("the give should open the role list");
+        };
+        assert!(give);
+        // Crew is held and @everyone is nobody's to give, so only
+        // Moderator is left
+        assert_eq!(items, vec![("r2".to_string(), "Moderator".to_string())]);
+        let Some(MessageActionOutcome::Run {
+            action, argument, ..
+        }) = app.message_actions_confirm()
+        else {
+            panic!("choosing a role should run the give");
+        };
+        assert_eq!(action, MessageAction::GiveRole);
+        assert_eq!(argument.as_deref(), Some("r2"));
+    }
+
+    /// x asks with the cursor on "No", and never about the everyone role.
+    #[test]
+    fn deleting_a_role_asks_first_and_spares_everyone() {
+        let mut app = app_with(crate::permissions::MANAGE_ROLES, vec![]);
+        app.open_communities();
+        app.open_guild_roles("g".into());
+        // the list ends with @everyone
+        app.community_move(2);
+        assert!(app.community_selected_role_is_everyone());
+        assert!(!app.ask_role_delete());
+        app.community_move(-2);
+        assert!(!app.community_selected_role_is_everyone());
+        assert!(app.ask_role_delete());
+        assert_eq!(app.community_len(), 2);
+        assert_eq!(
+            app.community_role_delete_choice()
+                .map(|(_, id, _, yes)| (id, yes)),
+            Some(("r2".to_string(), false))
+        );
+        app.community_move(-1);
+        assert!(
+            app.community_role_delete_choice()
+                .is_some_and(|(_, _, _, yes)| yes)
+        );
+        // Esc goes back onto the list rather than closing the overlay
+        app.community_back();
+        assert_eq!(app.community_len(), 3);
+        assert!(app.community_roles_guild().is_some());
+    }
+
+    #[test]
+    fn the_roles_overlay_needs_the_permission_and_walks_the_list() {
+        let app = app_with(crate::permissions::VIEW_CHANNEL, vec![]);
+        assert!(!app.community_actions().contains(&CommunityAction::Roles));
+        let mut app = app_with(crate::permissions::MANAGE_ROLES, vec![]);
+        assert!(app.community_actions().contains(&CommunityAction::Roles));
+        app.open_communities();
+        app.open_guild_roles("g".into());
+        assert_eq!(app.community_len(), 3);
+        app.community_move(1);
+        assert_eq!(
+            app.community_selected_role().map(|r| r.name),
+            Some("Crew".into())
+        );
     }
 }
