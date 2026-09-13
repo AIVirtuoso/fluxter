@@ -102,6 +102,11 @@ GIFs
            Type to change the search, Enter runs it, up/down move, Enter sends
            the one under the cursor, Esc closes.
 
+Voice messages
+  Ctrl+R - start recording; Ctrl+R again sends it, Esc throws it away. The
+           recording is done by pw-record, parecord or arecord, whichever is on
+           PATH, or by [media] recorder_command.
+
 Messages
   Up / Down / j / k - scroll list, or move selection when a message is selected
   PgUp / PgDn - scroll message pane

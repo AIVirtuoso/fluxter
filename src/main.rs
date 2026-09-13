@@ -504,6 +504,7 @@ async fn main() -> Result<()> {
     ];
     app.media = crate::media::MediaCache::new((config.media.memory_cache_mb.max(1) as usize) << 20);
     app.audio_player_cmd = config.media.audio_player.clone();
+    app.recorder_cmd = config.media.recorder_command.clone();
     app.disk_cache = dirs::cache_dir()
         .map(|d| d.join("fluxer-tui").join("media"))
         .and_then(|dir| {
@@ -3246,6 +3247,30 @@ fn handle_key_event(
         } else {
             app.set_status("No other channels with unread or mention activity.");
         }
+        return;
+    }
+
+    // A recording is running on the microphone, so it outranks the focus:
+    // Ctrl+R finishes and sends it, Esc throws it away, and nothing else
+    // can start a second one.
+    if app.recorder.is_some() {
+        match key.code {
+            KeyCode::Char('r') | KeyCode::Char('R')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                send_recording(app, client, event_tx);
+                return;
+            }
+            KeyCode::Esc => {
+                app.cancel_recording();
+                return;
+            }
+            _ => {}
+        }
+    } else if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        app.start_recording();
         return;
     }
 
@@ -7101,6 +7126,81 @@ struct Outgoing {
     tts: bool,
     attachments: Vec<StagedAttachment>,
     stickers: Vec<crate::app::StagedSticker>,
+}
+
+/// Finish the recording and send it as a voice message: one attachment,
+/// no text, with the flag that binds it to the server's voice contract.
+fn send_recording(app: &mut App, client: &FluxerHttpClient, event_tx: &UnboundedSender<AppEvent>) {
+    let Some(channel_id) = app.active_channel_id() else {
+        app.cancel_recording();
+        return;
+    };
+    let Some(staged) = app.finish_recording() else {
+        return;
+    };
+    let secs = staged
+        .voice
+        .as_ref()
+        .map(|v| v.duration_secs)
+        .unwrap_or_default();
+    app.set_status(format!(
+        "Sending {} of voice…",
+        crate::media::format_duration(secs)
+    ));
+    spawn_send_voice_message(client.clone(), event_tx.clone(), channel_id, staged);
+}
+
+/// A voice message goes its own way rather than through the compose box:
+/// the server takes exactly one attachment, no content, no stickers and no
+/// embeds, so there is nothing of the box's state to carry.
+fn spawn_send_voice_message(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    channel_id: String,
+    staged: crate::media::StagedAttachment,
+) {
+    tokio::spawn(async move {
+        let uploaded = match client
+            .upload_attachments(&channel_id, std::slice::from_ref(&staged))
+            .await
+        {
+            Ok(refs) => refs,
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!(
+                    "Could not upload the recording: {err:#}"
+                )));
+                return;
+            }
+        };
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .to_string();
+        let request = CreateMessageRequest {
+            content: None,
+            nonce: Some(nonce),
+            flags: Some(crate::api::types::MESSAGE_FLAG_VOICE_MESSAGE as u32),
+            tts: None,
+            message_reference: None,
+            attachments: Some(uploaded),
+            sticker_ids: None,
+        };
+        match client.send_message(&channel_id, &request).await {
+            Ok(message) => {
+                let _ = event_tx.send(AppEvent::MessageSent {
+                    channel_id,
+                    message: Box::new(message),
+                });
+                let _ = event_tx.send(AppEvent::SetStatus("Voice message sent.".to_string()));
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!(
+                    "Failed to send the voice message: {err}"
+                )));
+            }
+        }
+    });
 }
 
 /// Search the GIF provider, or ask for what is trending when nothing was

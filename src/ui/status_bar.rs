@@ -84,6 +84,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     {
         status_mid = format!(" | \u{1F50A} {voice}");
     }
+    // a recording outranks everything: it is running on the microphone
+    // and the reader has to be able to see that it is
+    if let Some(secs) = app.recording_secs() {
+        status_mid = format!(
+            " | \u{23FA} recording {}  Ctrl+R sends \u{b7} Esc throws away",
+            crate::media::format_duration(secs)
+        );
+    }
 
     let hints = hints_for(app);
 

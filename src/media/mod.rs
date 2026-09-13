@@ -1,24 +1,42 @@
 mod attachments;
+
 mod audio;
+
 mod cache;
+
 mod chafa;
+
 mod disk_cache;
+
 mod gif_anim;
+
 mod inline;
+
 mod local;
+
 mod open_external;
+
 mod prepare;
+
+pub mod record;
+
 pub mod voice;
 
 pub use attachments::{
     ClipboardContent, StagedAttachment, content_type_for_extension, expand_home, from_clipboard,
     from_path, human_size,
 };
+
 pub use audio::{Player, attachment_is_audio, format_duration, player_command};
+
 pub use cache::{Lookup, MediaCache};
+
 pub use chafa::chafa_from_bytes;
+
 pub use disk_cache::DiskCache;
+
 pub use gif_anim::{decode_animation, decode_preview_animation};
+
 pub use inline::{
     AVATAR_COLS, AVATAR_PREVIEW_PX, AVATAR_ROWS, BLOCK_MAX_ROWS, Flatten, InlinePicture,
     MAX_PICTURES_PER_MESSAGE, attachment_picture, avatar_url, avatar_url_sized, block_px,
@@ -26,11 +44,14 @@ pub use inline::{
     parse_default_avatar_key, picture_cells, preview_limits, proxied_url, sixel_blank_transparent,
     sixel_rows,
 };
+
 pub use local::{
     LocalSource, file_url, image_dimensions_of, is_image, is_video, parse_file_url,
     parse_staged_url, picture_bytes, staged_url,
 };
+
 pub use open_external::{open_file_path, write_temp_video_bytes};
+
 pub use prepare::prepare_pictures;
 
 use crate::api::types::{
@@ -256,7 +277,6 @@ pub fn first_message_preview_media(msg: &MessageResponse) -> Option<MessagePrevi
 // Like when Tom Cruise laughs
 // That's how your finger
 // Felt in my ass
-
 #[cfg(test)]
 mod tests {
     use super::*;

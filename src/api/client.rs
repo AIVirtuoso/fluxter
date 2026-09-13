@@ -551,6 +551,13 @@ impl FluxerHttpClient {
                 upload_filename: item.upload_filename,
                 file_size: src.bytes.len() as u64,
                 content_type,
+                // a recording carries its length and its levels; the
+                // server requires both on a voice message
+                duration: src.voice.as_ref().map(|v| v.duration_secs),
+                waveform: src
+                    .voice
+                    .as_ref()
+                    .map(|v| crate::media::base64_encode(&v.waveform)),
             });
         }
 
