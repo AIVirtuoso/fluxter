@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -229,6 +229,35 @@ pub fn default_api_base_url() -> String {
     DEFAULT_API_BASE_URL.to_string()
 }
 
+/// The API address the client will actually talk to, which is always an
+/// `https://` one.
+///
+/// An empty setting is the default address and a bare host is read as https,
+/// but an `http://` one is refused instead of quietly upgraded: the login
+/// token travels in the headers of every request, so an address written down
+/// as cleartext has to fail where it can be read, not turn into a different
+/// address behind the reader's back.
+pub fn https_api_base_url(value: &str) -> Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(default_api_base_url());
+    }
+    let rest = match value.split_once("://") {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("https") => rest,
+        Some((scheme, rest)) => bail!(
+            "api_base_url is {scheme}://{rest}: the client only talks to the API \
+             over https, because the login token goes out with every request. \
+             Write it as https://{rest}"
+        ),
+        None => value,
+    };
+    let rest = rest.trim_end_matches('/');
+    if rest.split(['/', '?', '#']).next().unwrap_or("").is_empty() {
+        bail!("api_base_url has no host in it: {value}");
+    }
+    Ok(format!("https://{rest}"))
+}
+
 pub fn default_config_path() -> Result<PathBuf> {
     let base = dirs::config_dir().context("could not determine config directory")?;
     Ok(base.join("fluxer-tui").join("config.toml"))
@@ -255,4 +284,67 @@ pub fn save_config(path: &Path, config: &AppConfig) -> Result<()> {
     let serialized = toml::to_string_pretty(config).context("failed to serialize config")?;
     fs::write(path, serialized).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_API_BASE_URL, https_api_base_url};
+
+    #[test]
+    fn an_https_address_is_kept_and_tidied() {
+        assert_eq!(
+            https_api_base_url("https://api.fluxer.app/v1").unwrap(),
+            "https://api.fluxer.app/v1"
+        );
+        assert_eq!(
+            https_api_base_url("  https://api.fluxer.app/v1///  ").unwrap(),
+            "https://api.fluxer.app/v1"
+        );
+        assert_eq!(
+            https_api_base_url("HTTPS://API.Fluxer.app/v1").unwrap(),
+            "https://API.Fluxer.app/v1"
+        );
+    }
+
+    #[test]
+    fn an_address_with_no_scheme_is_read_as_https() {
+        assert_eq!(
+            https_api_base_url("api.fluxer.app/v1").unwrap(),
+            "https://api.fluxer.app/v1"
+        );
+        assert_eq!(
+            https_api_base_url("localhost:3000/v1").unwrap(),
+            "https://localhost:3000/v1"
+        );
+    }
+
+    #[test]
+    fn nothing_at_all_is_the_default_address() {
+        assert_eq!(https_api_base_url("").unwrap(), DEFAULT_API_BASE_URL);
+        assert_eq!(https_api_base_url("   ").unwrap(), DEFAULT_API_BASE_URL);
+    }
+
+    #[test]
+    fn every_other_scheme_is_refused_by_name() {
+        for address in [
+            "http://api.fluxer.app/v1",
+            "http://localhost:3000/v1",
+            "ws://api.fluxer.app/v1",
+            "HTTP://api.fluxer.app/v1",
+        ] {
+            let err = https_api_base_url(address).unwrap_err().to_string();
+            assert!(err.contains("api_base_url"), "{address}: {err}");
+            assert!(
+                err.contains("https://api.fluxer.app/v1")
+                    || err.contains("https://localhost:3000/v1"),
+                "{address}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_address_with_no_host_is_refused() {
+        assert!(https_api_base_url("https://").is_err());
+        assert!(https_api_base_url("https:///v1").is_err());
+    }
 }

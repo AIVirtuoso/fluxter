@@ -25,9 +25,7 @@ use crate::app::{
     MessageActionOutcome, ServerSelection, display_name, me_as_partial,
 };
 use crate::auth::ensure_auth;
-use crate::config::{
-    AppConfig, DEFAULT_API_BASE_URL, default_config_path, load_config, save_config,
-};
+use crate::config::{AppConfig, default_config_path, load_config, save_config};
 use crate::events::{AppEvent, apply_event};
 use crate::media::StagedAttachment;
 use crate::media::{MessagePreviewMedia, first_message_preview_media};
@@ -200,9 +198,7 @@ async fn main() -> Result<()> {
     if let Some(api_base_url) = args.api_base_url.clone() {
         config.api_base_url = api_base_url;
     }
-    if config.api_base_url.trim().is_empty() {
-        config.api_base_url = DEFAULT_API_BASE_URL.to_string();
-    }
+    config.api_base_url = config::https_api_base_url(&config.api_base_url)?;
 
     crate::ui::theme::set_terminal_theme(config.ui.theme == config::Theme::Terminal);
 

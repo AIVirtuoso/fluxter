@@ -94,12 +94,21 @@ impl FluxerHttpClient {
 
         // isreali GPT was here... Beep Boop. (joke)\
 
+        // the one invariant the rest of this file rests on: every request
+        // built from `base_url`, and so every request that carries the token,
+        // goes out over TLS. config::https_api_base_url settles what the user
+        // wrote; this refuses anything else that reaches here.
+        let base_url = base_url.into().trim_end_matches('/').to_string();
+        if !base_url.starts_with("https://") {
+            bail!("the API address has to be an https:// one, not {base_url}");
+        }
+
         Ok(Self {
             inner: reqwest::Client::builder()
                 .user_agent(ua)
                 .build()
                 .context("failed to build HTTP client")?,
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            base_url,
             token: None,
         })
     }
@@ -1666,12 +1675,15 @@ impl FluxerHttpClient {
     }
 
     /// GET media: attachments, embed pictures, GIF providers' files. The
-    /// auth token only goes to the API host itself. The web app loads media
-    /// through plain <img>/<video> tags, so Fluxer's own CDN never sees the
-    /// token either, and third-party hosts such as static.klipy.com must not.
+    /// auth token only goes to the API host itself, over https: an `http://`
+    /// address on that same host would put the token on the wire in
+    /// cleartext, so it is fetched as a stranger's instead. The web app loads
+    /// media through plain <img>/<video> tags, so Fluxer's own CDN never sees
+    /// the token either, and third-party hosts such as static.klipy.com must
+    /// not.
     pub async fn fetch_media_bytes(&self, url_or_path: &str) -> Result<Vec<u8>> {
         let target = self.url(url_or_path);
-        if url_host(&target) == url_host(&self.base_url) {
+        if target.starts_with("https://") && url_host(&target) == url_host(&self.base_url) {
             self.fetch_url_bytes(&target).await
         } else {
             self.fetch_public_bytes(&target).await
@@ -1702,7 +1714,17 @@ fn url_host(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::url_host;
+    use super::{FluxerHttpClient, url_host};
+
+    #[test]
+    fn a_client_is_only_built_on_an_https_address() {
+        assert!(FluxerHttpClient::new("https://api.fluxer.app/v1").is_ok());
+        let err = FluxerHttpClient::new("http://api.fluxer.app/v1")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("https://"), "{err}");
+        assert!(FluxerHttpClient::new("api.fluxer.app/v1").is_err());
+    }
 
     #[test]
     fn url_host_compares_hosts_only() {
