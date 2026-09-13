@@ -1236,6 +1236,116 @@ pub struct MessageActionsView {
     pub selected: usize,
 }
 
+/// Looking after one community channel: the same list-and-cursor shape as
+/// the message menu, opened with `a` on the channel list.
+#[derive(Debug)]
+pub struct ChannelAdminView {
+    pub channel_id: String,
+    pub guild_id: String,
+    /// The channel's name when the menu opened, for the headings and for
+    /// the sentence the confirmation asks.
+    pub channel_name: String,
+    pub mode: ChannelAdminMode,
+    pub actions: Vec<ChannelAdminAction>,
+    pub selected: usize,
+    /// Text being typed into the footer, when a row asked for some.
+    pub input: Option<ChannelAdminInput>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ChannelAdminMode {
+    /// The actions that apply to this channel.
+    Actions,
+    /// Which kind of channel to make, before its name is asked for.
+    NewKind,
+    /// The second press a deletion asks for.
+    ConfirmDelete,
+}
+
+/// One row of the channel menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelAdminAction {
+    New,
+    Rename,
+    Topic,
+    ClearTopic,
+    Slowmode,
+    CopyId,
+    Delete,
+}
+
+impl ChannelAdminAction {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::New => "Make a channel here",
+            Self::Rename => "Rename this channel",
+            Self::Topic => "Set the topic",
+            Self::ClearTopic => "Clear the topic",
+            Self::Slowmode => "Slowmode",
+            Self::CopyId => "Copy the channel id",
+            Self::Delete => "Delete this channel",
+        }
+    }
+
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::Delete => "for good",
+            _ => "",
+        }
+    }
+
+    pub fn is_destructive(self) -> bool {
+        self == Self::Delete
+    }
+}
+
+/// The kinds of channel a community can hold, in the order the menu
+/// offers them.
+pub const NEW_CHANNEL_KINDS: [(i32, &str); 4] = [
+    (CHANNEL_GUILD_TEXT, "Text channel"),
+    (CHANNEL_GUILD_VOICE, "Voice channel"),
+    (CHANNEL_GUILD_CATEGORY, "Category"),
+    (CHANNEL_GUILD_LINK, "Link channel"),
+];
+
+#[derive(Debug, Clone)]
+pub enum ChannelAdminInput {
+    /// The name of a channel to make, and which kind it will be.
+    NewName {
+        channel_type: i32,
+        text: String,
+    },
+    Rename(String),
+    Topic(String),
+    /// Seconds between messages, as typed.
+    Slowmode(String),
+}
+
+impl ChannelAdminInput {
+    pub fn text(&self) -> &str {
+        match self {
+            Self::NewName { text, .. } => text,
+            Self::Rename(t) | Self::Topic(t) | Self::Slowmode(t) => t,
+        }
+    }
+
+    pub fn text_mut(&mut self) -> &mut String {
+        match self {
+            Self::NewName { text, .. } => text,
+            Self::Rename(t) | Self::Topic(t) | Self::Slowmode(t) => t,
+        }
+    }
+
+    pub fn prompt(&self) -> &'static str {
+        match self {
+            Self::NewName { .. } => "Name for the new channel",
+            Self::Rename(_) => "New name",
+            Self::Topic(_) => "Topic",
+            Self::Slowmode(_) => "Seconds between messages (0 turns it off)",
+        }
+    }
+}
+
 /// The categories `POST /reports/message` takes, with the wording the web
 /// client puts on them.
 pub const REPORT_CATEGORIES: [(&str, &str); 12] = [
@@ -1639,6 +1749,8 @@ pub struct App {
     pub relationships_version: u64,
     /// The message actions menu while it is open.
     pub message_actions: Option<MessageActionsView>,
+    /// The channel menu while it is open.
+    pub channel_admin: Option<ChannelAdminView>,
     /// The pinned-messages overlay while it is open.
     pub pins: Option<PinsView>,
     /// The bookmarked-messages overlay while it is open.
@@ -1894,6 +2006,7 @@ impl App {
             relationships: HashMap::new(),
             relationships_version: 0,
             message_actions: None,
+            channel_admin: None,
             pins: None,
             saved: None,
             reaction_users: None,
@@ -6115,6 +6228,120 @@ impl App {
         out
     }
 
+    // `a` on the channel list: looking after one community channel
+
+    /// Whether the reader can make, change and delete channels in a
+    /// community. MANAGE_CHANNELS is a guild-level permission for making
+    /// one and a channel-level permission for changing one, so the menu
+    /// reads it on the channel the cursor is on.
+    pub fn can_manage_channel(&self, channel: &ChannelResponse) -> bool {
+        channel.guild_id.is_some()
+            && self.channel_permissions(channel) & crate::permissions::MANAGE_CHANNELS != 0
+    }
+
+    /// What the channel menu offers for the channel the cursor is on.
+    /// Copying the id is always there; the rest needs MANAGE_CHANNELS.
+    pub fn channel_admin_actions(&self, channel: &ChannelResponse) -> Vec<ChannelAdminAction> {
+        let mut out = Vec::new();
+        let manage = self.can_manage_channel(channel);
+        if manage {
+            out.push(ChannelAdminAction::New);
+            out.push(ChannelAdminAction::Rename);
+            let kind = channel.channel_type();
+            if matches!(kind, CHANNEL_GUILD_TEXT | CHANNEL_GUILD_VOICE) {
+                out.push(ChannelAdminAction::Topic);
+                if channel.topic.as_deref().is_some_and(|t| !t.is_empty()) {
+                    out.push(ChannelAdminAction::ClearTopic);
+                }
+                out.push(ChannelAdminAction::Slowmode);
+            }
+        }
+        out.push(ChannelAdminAction::CopyId);
+        if manage {
+            out.push(ChannelAdminAction::Delete);
+        }
+        out
+    }
+
+    /// Open the menu on the channel the cursor is on. False when there is
+    /// no community channel there, which is what makes the key quiet in a
+    /// conversation list.
+    pub fn open_channel_admin(&mut self) -> bool {
+        let Some(channel) = self.active_channel() else {
+            return false;
+        };
+        let Some(guild_id) = channel.guild_id.clone() else {
+            return false;
+        };
+        let actions = self.channel_admin_actions(&channel);
+        if actions.is_empty() {
+            return false;
+        }
+        self.close_overlays();
+        self.channel_admin = Some(ChannelAdminView {
+            channel_id: channel.id.clone(),
+            guild_id,
+            channel_name: channel.name.clone(),
+            mode: ChannelAdminMode::Actions,
+            actions,
+            selected: 0,
+            input: None,
+        });
+        true
+    }
+
+    /// How many rows the channel menu is showing.
+    pub fn channel_admin_len(&self) -> usize {
+        let Some(view) = &self.channel_admin else {
+            return 0;
+        };
+        match view.mode {
+            ChannelAdminMode::Actions => view.actions.len(),
+            ChannelAdminMode::NewKind => NEW_CHANNEL_KINDS.len(),
+            ChannelAdminMode::ConfirmDelete => 2,
+        }
+    }
+
+    pub fn channel_admin_move(&mut self, delta: isize) {
+        let count = self.channel_admin_len();
+        if let Some(view) = &mut self.channel_admin {
+            view.selected = if count == 0 {
+                0
+            } else {
+                (view.selected as isize + delta).clamp(0, count as isize - 1) as usize
+            };
+        }
+    }
+
+    /// Esc: out of the typing, then out of a sub-list, then closed.
+    pub fn channel_admin_back(&mut self) {
+        let Some(view) = &mut self.channel_admin else {
+            return;
+        };
+        if view.input.is_some() {
+            view.input = None;
+            return;
+        }
+        if matches!(view.mode, ChannelAdminMode::Actions) {
+            self.channel_admin = None;
+        } else {
+            view.mode = ChannelAdminMode::Actions;
+            view.selected = 0;
+        }
+    }
+
+    pub fn channel_admin_selected_action(&self) -> Option<ChannelAdminAction> {
+        let view = self.channel_admin.as_ref()?;
+        match view.mode {
+            ChannelAdminMode::Actions => view.actions.get(view.selected).copied(),
+            _ => None,
+        }
+    }
+
+    pub fn dismiss_channel_admin(&mut self) {
+        self.channel_admin = None;
+    }
+
     pub fn open_message_actions(&mut self) -> bool {
         let Some(msg) = self.selected_message() else {
             return false;
@@ -6475,6 +6702,7 @@ impl App {
         self.channel_picker = None;
         self.pings = None;
         self.message_actions = None;
+        self.channel_admin = None;
         self.pins = None;
         self.saved = None;
         self.reaction_users = None;

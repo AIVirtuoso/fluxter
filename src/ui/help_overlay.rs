@@ -68,6 +68,10 @@ Channels (middle column)
   Up / Down / j / k - move channel
   n - notification settings for the selected community
   Enter - open message view for channel
+  a - look after the community channel the cursor is on: make a channel here,
+           rename it, set or clear its topic, set slowmode, copy its id, delete
+           it. Only the rows your permissions allow are offered, and a deletion
+           asks a second time with the cursor on "No".
   In the direct messages list: P keeps a conversation at the top of the list
            (it shows ·pin), x closes it. Closing deletes nothing; the
            conversation comes back the moment either side writes.

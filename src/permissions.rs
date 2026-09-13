@@ -1,6 +1,7 @@
 use crate::api::types::PermissionOverwrite;
 
 pub const ADMINISTRATOR: u64 = 0x8;
+pub const MANAGE_CHANNELS: u64 = 1 << 4;
 pub const ADD_REACTIONS: u64 = 0x40;
 pub const VIEW_CHANNEL: u64 = 0x400;
 pub const SEND_MESSAGES: u64 = 0x800;

@@ -1,4 +1,5 @@
 pub mod ansi_line;
+pub mod channel_admin;
 pub mod channel_picker;
 pub mod command_popup;
 pub mod community_overlay;
@@ -144,6 +145,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         reaction_users_overlay::render(frame, area, app);
     } else if app.message_actions.is_some() {
         message_actions::render(frame, area, app);
+    } else if app.channel_admin.is_some() {
+        channel_admin::render(frame, area, app);
     } else if app.search.is_some() {
         search_overlay::render(frame, area, app);
     } else if app.conversation.is_some() {
