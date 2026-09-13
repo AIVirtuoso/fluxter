@@ -1099,7 +1099,16 @@ pub struct CreateMessageAttachment {
     pub upload_filename: String,
     pub file_size: u64,
     pub content_type: String,
+    /// Both are required on a voice message and absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waveform: Option<String>,
 }
+
+/// Bit 13 of a message's `flags`: the message is one voice recording and
+/// nothing else, and its attachment carries a duration and a waveform.
+pub const MESSAGE_FLAG_VOICE_MESSAGE: u64 = 1 << 13;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PresignedAttachmentUploadRequestItem {

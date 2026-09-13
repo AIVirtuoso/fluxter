@@ -1803,6 +1803,10 @@ pub struct App {
     pub attach_dir: Option<std::path::PathBuf>,
     /// The external player an audio attachment is playing through.
     pub audio: Option<crate::media::Player>,
+    /// The external recorder a voice message is being recorded by.
+    pub recorder: Option<crate::media::record::Recorder>,
+    /// `[media] recorder_command`: empty picks a recorder from PATH.
+    pub recorder_cmd: String,
     /// `[media] audio_player`: empty picks a player from PATH.
     pub audio_player_cmd: String,
     /// Whether the terminal window (or the VT, in console mode) is the one
@@ -1982,6 +1986,8 @@ impl App {
             sticker_picker: None,
             attach_dir: None,
             audio: None,
+            recorder: None,
+            recorder_cmd: String::new(),
             window_focused: true,
             audio_player_cmd: String::new(),
         };
@@ -3967,6 +3973,72 @@ impl App {
         };
         view.selected = 0;
         std::mem::take(messages).into_iter().map(|m| m.id).collect()
+    }
+
+    /// Start recording a voice message, or say why not. The recorder is a
+    /// program on PATH, so having none is a real state rather than a
+    /// failure, and the status line names the setting.
+    pub fn start_recording(&mut self) -> bool {
+        if self.recorder.is_some() {
+            return true;
+        }
+        if !self.active_channel_is_text() || !self.can_send_in_active_channel() {
+            self.set_status("You cannot send anything here.");
+            return false;
+        }
+        let Some(argv) = crate::media::record::recorder_command(&self.recorder_cmd) else {
+            self.set_status(
+                "No recorder on PATH: install pw-record, parecord or arecord, or set [media] recorder_command.",
+            );
+            return false;
+        };
+        match crate::media::record::Recorder::start(&argv) {
+            Ok(recorder) => {
+                crate::debug::log("voice", format!("recording with {}", recorder.program));
+                self.recorder = Some(recorder);
+                self.set_status("Recording: Ctrl+R sends it, Esc throws it away.");
+                true
+            }
+            Err(err) => {
+                self.set_status(format!("Could not start the recorder: {err}"));
+                false
+            }
+        }
+    }
+
+    /// How long the recording has been running, for the status line.
+    pub fn recording_secs(&self) -> Option<i64> {
+        self.recorder.as_ref().map(|r| r.elapsed_secs())
+    }
+
+    /// Stop the recorder and hand over what it wrote, as the attachment a
+    /// voice message is made of. None when nothing came back.
+    pub fn finish_recording(&mut self) -> Option<crate::media::StagedAttachment> {
+        let recorder = self.recorder.take()?;
+        let seconds = recorder.elapsed_secs();
+        let bytes = match recorder.finish() {
+            Ok(bytes) if bytes.len() > 44 => bytes,
+            Ok(_) => {
+                self.set_status("The recording came back empty.");
+                return None;
+            }
+            Err(err) => {
+                self.set_status(format!("Could not read the recording: {err}"));
+                return None;
+            }
+        };
+        // a configured recorder may write something this client cannot
+        // read back; the length it was recording for still stands
+        let shape = crate::media::record::wav_shape(&bytes)
+            .unwrap_or_else(|| crate::media::record::flat_shape(seconds));
+        Some(crate::media::StagedAttachment::voice_message(bytes, shape))
+    }
+
+    pub fn cancel_recording(&mut self) {
+        if let Some(recorder) = self.recorder.take() {
+            recorder.cancel();
+            self.set_status("Recording thrown away.");
+        }
     }
 
     pub fn dismiss_profile(&mut self) {

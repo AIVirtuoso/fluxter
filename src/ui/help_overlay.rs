@@ -72,6 +72,11 @@ Channels (middle column)
            (it shows ·pin), x closes it. Closing deletes nothing; the
            conversation comes back the moment either side writes.
 
+Voice messages
+  Ctrl+R - start recording; Ctrl+R again sends it, Esc throws it away. The
+           recording is done by pw-record, parecord or arecord, whichever is on
+           PATH, or by [media] recorder_command.
+
 Messages
   Up / Down / j / k - scroll list, or move selection when a message is selected
   PgUp / PgDn - scroll message pane

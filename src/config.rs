@@ -180,6 +180,19 @@ pub struct MediaSettings {
     /// ```
     #[serde(default)]
     pub voice_command: String,
+    /// The program that records a voice message (whitespace-separated).
+    /// `{file}` is where the recording goes, and a command that names no
+    /// `{file}` gets the path appended. Empty picks the first of
+    /// pw-record, parecord and arecord on PATH, each asked for mono
+    /// 16 kHz WAV -- the format whose length and levels the client can
+    /// read back without decoding anything.
+    ///
+    /// ```toml
+    /// [media]
+    /// recorder_command = "arecord -q -t wav -f S16_LE -r 16000 -c 1 {file}"
+    /// ```
+    #[serde(default)]
+    pub recorder_command: String,
 }
 
 impl Default for MediaSettings {
@@ -189,6 +202,7 @@ impl Default for MediaSettings {
             memory_cache_mb: 64,
             audio_player: String::new(),
             voice_command: String::new(),
+            recorder_command: String::new(),
         }
     }
 }

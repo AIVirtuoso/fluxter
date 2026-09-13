@@ -17,6 +17,9 @@ pub struct StagedAttachment {
     pub bytes: Vec<u8>,
     /// Pixel size of an image, from its header.
     pub dimensions: Option<(u32, u32)>,
+    /// Set on a recording: how long it runs and its levels, both of which
+    /// the server requires on a voice message.
+    pub voice: Option<super::record::VoiceShape>,
 }
 
 // A 32-bit counter, not a 64-bit one: powerpc and the other 32-bit targets have no
@@ -36,7 +39,20 @@ impl StagedAttachment {
             content_type,
             bytes,
             dimensions,
+            voice: None,
         }
+    }
+
+    /// A recording, which the server takes as a voice message: one
+    /// attachment, no text, and the length and levels alongside it.
+    pub fn voice_message(bytes: Vec<u8>, shape: super::record::VoiceShape) -> Self {
+        let mut staged = Self::new(
+            "voice-message.wav".to_string(),
+            "audio/wav".to_string(),
+            bytes,
+        );
+        staged.voice = Some(shape);
+        staged
     }
 
     pub fn size_label(&self) -> String {

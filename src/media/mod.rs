@@ -8,6 +8,7 @@ mod inline;
 mod local;
 mod open_external;
 mod prepare;
+pub mod record;
 pub mod voice;
 
 pub use attachments::{
@@ -362,5 +363,60 @@ mod tests {
         assert_eq!(gif_label(&embed), "GIF");
         embed.url = None;
         assert_eq!(gif_label(&embed), "GIF");
+    }
+}
+
+/// Base64, for the one thing that needs it: a picture sent inside a JSON
+/// body rather than uploaded. Standard alphabet, padded, no line breaks.
+/// Hand-written rather than pulled in, since this is the whole of the job.
+pub fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[(triple >> 18) as usize & 0x3F] as char);
+        out.push(ALPHABET[(triple >> 12) as usize & 0x3F] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(triple >> 6) as usize & 0x3F] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[triple as usize & 0x3F] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+#[cfg(test)]
+mod base64_tests {
+    use super::base64_encode;
+
+    /// The vectors from RFC 4648, which is the whole of the contract.
+    #[test]
+    fn the_rfc_vectors_come_out_right() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+
+    /// Every byte value, so the alphabet and the shifts are exercised
+    /// rather than just ASCII.
+    #[test]
+    fn the_whole_byte_range_round_trips_against_a_known_answer() {
+        let bytes: Vec<u8> = (0u8..=255).collect();
+        let encoded = base64_encode(&bytes);
+        assert_eq!(encoded.len(), 344);
+        assert!(encoded.starts_with("AAECAwQFBgcICQoLDA0ODxAREhMUFRYX"));
+        assert!(encoded.ends_with("8PHy8/T19vf4+fr7/P3+/w=="));
     }
 }

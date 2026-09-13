@@ -611,6 +611,39 @@ audio_player = "sox -q -t mp3 - -d"
 The status line shows what plays. Audio attachments are listed with ♪
 and their length.
 
+## Recording a voice message
+
+**Ctrl+R** starts recording, **Ctrl+R** again sends it, **Esc** throws it
+away. While it runs, the status bar shows `recording 0:07` with both keys
+beside it, whichever box has the focus.
+
+The client does not touch the microphone itself. It starts a program and
+reads the file that program writes, the same division as playing audio and
+carrying a call: the first of **pw-record**, **parecord** and **arecord**
+found on PATH, each asked for mono 16 kHz WAV. Set your own with
+
+```toml
+[media]
+recorder_command = "arecord -q -t wav -f S16_LE -r 16000 -c 1 {file}"
+```
+
+`{file}` is where the recording goes, and a command that names no `{file}`
+gets the path appended. With no recorder and no setting nothing happens
+except a line saying so -- that is a real state, not a failure.
+
+A voice message is not an ordinary message with a file on it: the server
+takes **exactly one attachment and nothing else**, no text, no stickers, no
+link previews, and it requires the recording's **length** and a
+**waveform**. The client reads both out of the WAV it was handed -- the
+length from the format and data chunks, the waveform as the loudest sample
+in each of 64 buckets -- so what the other end draws is the recording's own
+shape. A recorder configured to write something this client cannot read
+back still sends: the length is then the time it was recording for, and the
+waveform flat.
+
+Mono 16 kHz is about 32 KB a second, so a minute is under 2 MB. The
+server's own ceiling is twenty minutes.
+
 ## Attaching files
 
 Any kind of file can go with a message, up to ten at a time:
@@ -1227,6 +1260,7 @@ close. The profile of a selected message's author is on **u** now.
 | **PageUp**              | Scroll message list up (larger step).                                                                                                                                                                                                                    |
 | **PageDown**            | Scroll message list down (larger step).                                                                                                                                                                                                                  |
 | **Ctrl+N** / **Ctrl+P** | Next / previous **text** channel (wraps; works from input too unless a popup is open).                                                                                                                                                                   |
+| **Ctrl+R**              | **Record a voice message**; **Ctrl+R** again sends it, **Esc** throws it away (see "Recording a voice message").                                                                                           |
 | **Ctrl+K**              | Open **channel picker** (type to filter, **Enter** to jump).                                                                                                                                                                                             |
 | **Alt+A**               | Jump to the **next channel** (after current) that has **unread** or **mention** badges; wraps.                                                                                                                                                           |
 | **Alt+1** … **Alt+9**   | Go straight to a place in the left column: **Alt+1** is the conversation list, **Alt+2** the first community, and so on (see "Getting about").                                                                                                           |
