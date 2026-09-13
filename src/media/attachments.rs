@@ -44,12 +44,15 @@ impl StagedAttachment {
     }
 
     /// A recording, which the server takes as a voice message: one
-    /// attachment, no text, and the length and levels alongside it.
-    pub fn voice_message(bytes: Vec<u8>, shape: super::record::VoiceShape) -> Self {
+    /// attachment, no text, and the length and levels alongside it. Its
+    /// name and type follow what the recorder actually wrote.
+    pub fn voice_message(recording: super::record::Recording) -> Self {
+        let container = super::record::Container::of(&recording.bytes);
+        let shape = recording.shape();
         let mut staged = Self::new(
-            "voice-message.wav".to_string(),
-            "audio/wav".to_string(),
-            bytes,
+            container.filename().to_string(),
+            container.content_type().to_string(),
+            recording.bytes,
         );
         staged.voice = Some(shape);
         staged

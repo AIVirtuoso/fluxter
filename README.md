@@ -619,30 +619,36 @@ beside it, whichever box has the focus.
 
 The client does not touch the microphone itself. It starts a program and
 reads the file that program writes, the same division as playing audio and
-carrying a call: the first of **pw-record**, **parecord** and **arecord**
-found on PATH, each asked for mono 16 kHz WAV. Set your own with
+carrying a call. With **ffmpeg** on PATH -- which the client already uses
+for video posters -- it captures from PipeWire or PulseAudio (ALSA on a
+bare console) and writes **Ogg Opus** straight away, mono at 32 kbit/s in
+the voice profile, the format the web client records in itself; a minute
+is about 240 KB. Without ffmpeg the first of **pw-record**, **parecord**
+and **arecord** records mono 16 kHz WAV instead, which is about 2 MB a
+minute. Set your own with
 
 ```toml
 [media]
-recorder_command = "arecord -q -t wav -f S16_LE -r 16000 -c 1 {file}"
+recorder_command = "ffmpeg -loglevel error -y -f pulse -i default -ac 1 -c:a libopus -b:a 24k {file}"
 ```
 
 `{file}` is where the recording goes, and a command that names no `{file}`
-gets the path appended. With no recorder and no setting nothing happens
-except a line saying so -- that is a real state, not a failure.
+gets the path appended. The file ends in `.ogg` when the command speaks of
+ffmpeg, ogg or opus and `.wav` otherwise, which is how ffmpeg picks its
+container; what the program actually wrote is read off the file's first
+bytes, so a command may write either. With no recorder and no setting
+nothing happens except a line saying so -- that is a real state, not a
+failure.
 
 A voice message is not an ordinary message with a file on it: the server
 takes **exactly one attachment and nothing else**, no text, no stickers, no
 link previews, and it requires the recording's **length** and a
-**waveform**. The client reads both out of the WAV it was handed -- the
-length from the format and data chunks, the waveform as the loudest sample
-in each of 64 buckets -- so what the other end draws is the recording's own
-shape. A recorder configured to write something this client cannot read
-back still sends: the length is then the time it was recording for, and the
-waveform flat.
-
-Mono 16 kHz is about 32 KB a second, so a minute is under 2 MB. The
-server's own ceiling is twenty minutes.
+**waveform**. For an Ogg the length is read off its last page and the
+levels by decoding it with ffmpeg, as the loudest sample in each of 64
+buckets; for a WAV both come out of the file itself. A recorder configured
+to write something this client cannot read back still sends: the length is
+then the time it was recording for, and the waveform flat. The server's
+own ceiling is twenty minutes.
 
 ## Attaching files
 

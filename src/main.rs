@@ -7345,19 +7345,14 @@ fn send_recording(app: &mut App, client: &FluxerHttpClient, event_tx: &Unbounded
         app.cancel_recording();
         return;
     };
-    let Some(staged) = app.finish_recording() else {
+    let Some(recording) = app.finish_recording() else {
         return;
     };
-    let secs = staged
-        .voice
-        .as_ref()
-        .map(|v| v.duration_secs)
-        .unwrap_or_default();
     app.set_status(format!(
         "Sending {} of voice…",
-        crate::media::format_duration(secs)
+        crate::media::format_duration(recording.elapsed_secs)
     ));
-    spawn_send_voice_message(client.clone(), event_tx.clone(), channel_id, staged);
+    spawn_send_voice_message(client.clone(), event_tx.clone(), channel_id, recording);
 }
 
 /// A voice message goes its own way rather than through the compose box:
@@ -7367,9 +7362,33 @@ fn spawn_send_voice_message(
     client: FluxerHttpClient,
     event_tx: UnboundedSender<AppEvent>,
     channel_id: String,
-    staged: crate::media::StagedAttachment,
+    recording: crate::media::record::Recording,
 ) {
     tokio::spawn(async move {
+        // the shape may mean decoding the file, so it is read off the
+        // drawing thread; what the recorder wrote decides the name and type
+        let staged = match tokio::task::spawn_blocking(move || {
+            crate::media::StagedAttachment::voice_message(recording)
+        })
+        .await
+        {
+            Ok(staged) => staged,
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::ApiError(format!(
+                    "Could not read the recording: {err}"
+                )));
+                return;
+            }
+        };
+        debug::log(
+            "voice",
+            format!(
+                "{} of {} bytes, {} s",
+                staged.content_type,
+                staged.bytes.len(),
+                staged.voice.as_ref().map(|v| v.duration_secs).unwrap_or(0)
+            ),
+        );
         let uploaded = match client
             .upload_attachments(&channel_id, std::slice::from_ref(&staged))
             .await
