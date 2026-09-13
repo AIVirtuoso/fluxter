@@ -72,6 +72,11 @@ Channels (middle column)
            (it shows ·pin), x closes it. Closing deletes nothing; the
            conversation comes back the moment either side writes.
 
+GIFs
+  /gif - the GIF picker: alone for what is trending, /gif <words> to search.
+           Type to change the search, Enter runs it, up/down move, Enter sends
+           the one under the cursor, Esc closes.
+
 Messages
   Up / Down / j / k - scroll list, or move selection when a message is selected
   PgUp / PgDn - scroll message pane

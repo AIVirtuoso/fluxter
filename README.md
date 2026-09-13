@@ -632,6 +632,29 @@ sticker is staged), **Enter** sends text and files together. A video's
 preview is its first frame, which `ffmpeg` on PATH provides; without it
 videos are listed by name.
 
+## GIFs
+
+`/gif` opens the picker: alone it shows what the provider is pushing,
+`/gif goat banjo` searches. Type to change the search and press **Enter**
+to run it; **↑** / **↓** walk the answers with the one under the cursor
+drawn beside the list, and **Enter** on it sends. **Esc** closes.
+
+What is sent is the GIF's **provider page address**, not a file: the server
+unfurls that into the moving picture everybody sees, which is what the web
+client posts as well. The client also tells the provider the GIF was shared,
+because that is what its terms ask for; nothing about your message goes with
+that, and a failure there is logged and ignored.
+
+The preview is the provider's smallest still `gif` format rather than the
+`webm` the server would otherwise choose, since a terminal draws pictures
+and not video. A terminal that draws no pictures says so instead of leaving
+a hole, and the list still works.
+
+Two things come from the instance, not from here: the provider itself (so
+the results differ between instances), and whether GIFs work at all -- an
+instance that has bound no provider key answers "temporarily disabled", which
+is shown as it came.
+
 ## Stickers
 
 A sticker is a picture a community stores for its members to send. The

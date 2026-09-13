@@ -1445,6 +1445,14 @@ fn handle_input_focus_key(
                     app.open_file_picker();
                     return;
                 }
+                if let crate::slash_commands::OutgoingSlash::GifPick(query) = &resolved {
+                    let query = query.clone();
+                    app.dismiss_command_autocomplete();
+                    let _ = app.take_input();
+                    app.open_gif_picker(query.clone());
+                    spawn_gif_search(client.clone(), event_tx.clone(), query);
+                    return;
+                }
                 if let crate::slash_commands::OutgoingSlash::StickerPick(query) = &resolved {
                     let query = query.clone();
                     app.dismiss_command_autocomplete();
@@ -2133,6 +2141,43 @@ fn handle_key_event(
                 }
             }
             KeyCode::Char('h') | KeyCode::Left => app.message_actions_back(),
+            _ => {}
+        }
+        return;
+    }
+
+    if app.gif_picker.is_some() {
+        match key.code {
+            KeyCode::Esc => app.dismiss_gif_picker(),
+            KeyCode::Up => app.gif_picker_move(-1),
+            KeyCode::Down => app.gif_picker_move(1),
+            KeyCode::PageUp => app.gif_picker_move(-8),
+            KeyCode::PageDown => app.gif_picker_move(8),
+            KeyCode::Backspace => {
+                if let Some(view) = app.gif_picker.as_mut() {
+                    view.query.pop();
+                }
+            }
+            // Enter searches what has been typed, and once results are
+            // there it sends the one under the cursor
+            KeyCode::Enter => {
+                if let Some(gif) = app.gif_picker_selected() {
+                    send_gif(app, client, event_tx, gif);
+                } else if let Some(view) = app.gif_picker.as_ref() {
+                    let query = view.query.clone();
+                    app.open_gif_picker(query.clone());
+                    spawn_gif_search(client.clone(), event_tx.clone(), query);
+                }
+            }
+            // typing a new search starts from the list again
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(view) = app.gif_picker.as_mut()
+                    && view.query.chars().count() < 256
+                {
+                    view.query.push(c);
+                    view.state = crate::app::GifPickerState::Ready(Vec::new());
+                }
+            }
             _ => {}
         }
         return;
@@ -5149,6 +5194,70 @@ struct Outgoing {
     tts: bool,
     attachments: Vec<StagedAttachment>,
     stickers: Vec<crate::app::StagedSticker>,
+}
+
+/// Search the GIF provider, or ask for what is trending when nothing was
+/// typed.
+fn spawn_gif_search(client: FluxerHttpClient, event_tx: UnboundedSender<AppEvent>, query: String) {
+    tokio::spawn(async move {
+        let result = if query.trim().is_empty() {
+            client.trending_gifs().await
+        } else {
+            client.search_gifs(&query).await
+        };
+        match result {
+            Ok(gifs) => {
+                let _ = event_tx.send(AppEvent::GifsLoaded { query, gifs });
+            }
+            Err(err) => {
+                let _ = event_tx.send(AppEvent::GifsFailed {
+                    query,
+                    message: format!("The GIF search failed: {err}"),
+                });
+            }
+        }
+    });
+}
+
+/// Send the GIF under the cursor: its provider page as the message, which
+/// the server unfurls, and a share registered with the provider because
+/// its terms ask for one.
+fn send_gif(
+    app: &mut App,
+    client: &FluxerHttpClient,
+    event_tx: &UnboundedSender<AppEvent>,
+    gif: crate::api::types::GifResponse,
+) {
+    let Some(channel_id) = app.active_channel_id() else {
+        return;
+    };
+    if !app.active_channel_is_text() || !app.can_send_in_active_channel() {
+        app.set_status("You cannot send anything here.");
+        return;
+    }
+    app.dismiss_gif_picker();
+    app.set_status("Sending the GIF…");
+    let url = gif.share_url().to_string();
+    spawn_send_message(
+        client.clone(),
+        event_tx.clone(),
+        channel_id,
+        Outgoing {
+            content: url,
+            reply: None,
+            is_forward: false,
+            tts: false,
+            attachments: Vec::new(),
+            stickers: Vec::new(),
+        },
+    );
+    let client = client.clone();
+    let id = gif.id.clone();
+    tokio::spawn(async move {
+        if let Err(err) = client.register_gif_share(&id).await {
+            debug::log("gif", format!("share not registered: {err}"));
+        }
+    });
 }
 
 fn spawn_send_message(

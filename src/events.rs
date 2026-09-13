@@ -17,6 +17,14 @@ pub enum AppEvent {
         kind: String,
         payload: Value,
     },
+    GifsLoaded {
+        query: String,
+        gifs: Vec<crate::api::types::GifResponse>,
+    },
+    GifsFailed {
+        query: String,
+        message: String,
+    },
     GuildChannelsLoaded {
         guild_id: String,
         channels: Vec<ChannelResponse>,
@@ -1087,6 +1095,12 @@ pub fn apply_event(
             app.loading_channels.remove(&guild_id);
             app.api_backoff_after_failure(format!("channels:{guild_id}"));
             app.set_status(message);
+        }
+        AppEvent::GifsLoaded { query, gifs } => {
+            app.set_gifs_loaded(&query, gifs);
+        }
+        AppEvent::GifsFailed { query, message } => {
+            app.set_gifs_failed(&query, message);
         }
         AppEvent::GuildMembersLoaded { guild_id, members } => {
             app.set_guild_members(&guild_id, members);

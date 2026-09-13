@@ -1236,6 +1236,22 @@ pub struct MessageActionsView {
     pub selected: usize,
 }
 
+/// Picking a GIF to send: `/gif`, with the search line at the top and the
+/// matches under it.
+#[derive(Debug)]
+pub struct GifPicker {
+    pub query: String,
+    pub state: GifPickerState,
+    pub selected: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum GifPickerState {
+    Loading,
+    Ready(Vec<crate::api::types::GifResponse>),
+    Failed(String),
+}
+
 /// The categories `POST /reports/message` takes, with the wording the web
 /// client puts on them.
 pub const REPORT_CATEGORIES: [(&str, &str); 12] = [
@@ -1639,6 +1655,8 @@ pub struct App {
     pub relationships_version: u64,
     /// The message actions menu while it is open.
     pub message_actions: Option<MessageActionsView>,
+    /// The GIF picker while it is open.
+    pub gif_picker: Option<GifPicker>,
     /// The pinned-messages overlay while it is open.
     pub pins: Option<PinsView>,
     /// The bookmarked-messages overlay while it is open.
@@ -1894,6 +1912,7 @@ impl App {
             relationships: HashMap::new(),
             relationships_version: 0,
             message_actions: None,
+            gif_picker: None,
             pins: None,
             saved: None,
             reaction_users: None,
@@ -6115,6 +6134,92 @@ impl App {
         out
     }
 
+    // `/gif`: picking a GIF to send
+
+    /// How many rows tall a GIF's preview may be. A picker row is a few
+    /// cells; bigger would hide the list it belongs to.
+    pub const GIF_PREVIEW_ROWS: u16 = 6;
+
+    pub fn open_gif_picker(&mut self, query: String) {
+        self.close_overlays();
+        self.gif_picker = Some(GifPicker {
+            query,
+            state: GifPickerState::Loading,
+            selected: 0,
+        });
+    }
+
+    pub fn dismiss_gif_picker(&mut self) {
+        self.gif_picker = None;
+    }
+
+    pub fn set_gifs_loaded(&mut self, query: &str, gifs: Vec<crate::api::types::GifResponse>) {
+        if let Some(view) = &mut self.gif_picker
+            && view.query.trim() == query.trim()
+        {
+            view.state = GifPickerState::Ready(gifs);
+            view.selected = 0;
+        }
+    }
+
+    pub fn set_gifs_failed(&mut self, query: &str, message: String) {
+        if let Some(view) = &mut self.gif_picker
+            && view.query.trim() == query.trim()
+        {
+            view.state = GifPickerState::Failed(message);
+        }
+    }
+
+    pub fn gif_picker_len(&self) -> usize {
+        match self.gif_picker.as_ref().map(|v| &v.state) {
+            Some(GifPickerState::Ready(gifs)) => gifs.len(),
+            _ => 0,
+        }
+    }
+
+    pub fn gif_picker_move(&mut self, delta: isize) {
+        let count = self.gif_picker_len();
+        if let Some(view) = &mut self.gif_picker {
+            view.selected = if count == 0 {
+                0
+            } else {
+                (view.selected as isize + delta).clamp(0, count as isize - 1) as usize
+            };
+        }
+    }
+
+    pub fn gif_picker_selected(&self) -> Option<crate::api::types::GifResponse> {
+        let view = self.gif_picker.as_ref()?;
+        match &view.state {
+            GifPickerState::Ready(gifs) => gifs.get(view.selected).cloned(),
+            _ => None,
+        }
+    }
+
+    /// The block the GIF under the cursor is drawn in, when the terminal
+    /// can draw one at all. The shape comes from the format being shown,
+    /// not from the webm the server chose.
+    pub fn gif_preview_slot(&self, gif: &crate::api::types::GifResponse) -> Option<MediaSlot> {
+        if !self.pictures_enabled() {
+            return None;
+        }
+        let format = gif.preview_format()?;
+        if format.width == 0 || format.height == 0 {
+            return None;
+        }
+        let (cols, rows) = crate::media::picture_cells(
+            (format.width, format.height),
+            self.cell_px,
+            (40, Self::GIF_PREVIEW_ROWS),
+        );
+        Some(MediaSlot::new(
+            format.proxy_src.clone(),
+            cols,
+            rows,
+            MediaKind::Picture,
+        ))
+    }
+
     pub fn open_message_actions(&mut self) -> bool {
         let Some(msg) = self.selected_message() else {
             return false;
@@ -6475,6 +6580,7 @@ impl App {
         self.channel_picker = None;
         self.pings = None;
         self.message_actions = None;
+        self.gif_picker = None;
         self.pins = None;
         self.saved = None;
         self.reaction_users = None;
