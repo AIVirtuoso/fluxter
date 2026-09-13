@@ -194,6 +194,8 @@ fn logged_sparsely(kind: &str) -> bool {
             | "GUILD_MEMBER_LIST_UPDATE"
             | "MESSAGE_ACK"
             | "SESSIONS_REPLACE"
+            // one per passive community every 30 seconds
+            | "PASSIVE_UPDATES"
     )
 }
 

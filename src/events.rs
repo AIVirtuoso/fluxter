@@ -921,6 +921,58 @@ pub fn apply_event(
                     }
                 }
             }
+            // the reader acknowledged the pins somewhere: every session
+            // of the account hears about it, this one included
+            "CHANNEL_PINS_ACK" => {
+                #[derive(serde::Deserialize)]
+                struct PinsAck {
+                    channel_id: String,
+                }
+                if let Some(event) = read::<PinsAck>(&kind, payload) {
+                    app.channels_with_new_pins.remove(&event.channel_id);
+                }
+            }
+            // a ping dropped from the inbox elsewhere, or whose message
+            // was deleted: it goes from the list here too
+            "RECENT_MENTION_DELETE" => {
+                #[derive(serde::Deserialize)]
+                struct MentionDelete {
+                    message_id: String,
+                }
+                if let Some(event) = read::<MentionDelete>(&kind, payload) {
+                    app.pings_drop_message(&event.message_id);
+                }
+            }
+            // A session is passive in a community over 250 members unless
+            // it marked it active, and a passive community sends what the
+            // session would otherwise have missed every 30 seconds rather
+            // than event by event: the channels whose newest message moved
+            // on, and the voice states that changed. Without this the
+            // unread marks of every big community but the open one stand
+            // still until something is fetched.
+            "PASSIVE_UPDATES" => {
+                #[derive(serde::Deserialize)]
+                struct PassiveUpdates {
+                    guild_id: String,
+                    #[serde(default)]
+                    channels: std::collections::HashMap<String, String>,
+                    #[serde(default)]
+                    voice_states: Vec<VoiceStateResponse>,
+                }
+                if let Some(event) = read::<PassiveUpdates>(&kind, payload) {
+                    for (channel_id, last_message_id) in &event.channels {
+                        app.patch_channel_last_message_id(channel_id, last_message_id);
+                    }
+                    for mut state in event.voice_states {
+                        // the states come inside the community's update and
+                        // need not name it again
+                        if state.guild_id.is_none() {
+                            state.guild_id = Some(event.guild_id.clone());
+                        }
+                        app.update_voice_state(state);
+                    }
+                }
+            }
             "SAVED_MESSAGE_CREATE" => {
                 #[derive(serde::Deserialize)]
                 struct SavedChange {
@@ -1385,5 +1437,145 @@ fn reaction_emoji_key(emoji: &crate::api::types::ReactionEmojiResponse) -> Strin
         id.clone()
     } else {
         emoji.name.clone()
+    }
+}
+
+/// The events a passive community sends instead of the stream a selected
+/// one gets, and the two acknowledgements that arrive from the reader's
+/// other clients.
+#[cfg(test)]
+mod passive_tests {
+    use super::{AppEvent, apply_event};
+    use crate::api::types::{
+        ChannelResponse, GuildResponse, UserPrivateResponse, WellKnownFluxerResponse,
+    };
+    use crate::app::{App, ServerSelection};
+    use crate::config::UiSettings;
+
+    fn app_with_guild() -> App {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let guild = GuildResponse {
+            id: "g".into(),
+            name: "big".into(),
+            ..Default::default()
+        };
+        let channel = ChannelResponse {
+            id: "c".into(),
+            kind: 0,
+            name: "general".into(),
+            guild_id: Some("g".into()),
+            last_message_id: Some("100".into()),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            WellKnownFluxerResponse::default(),
+            me,
+            None,
+            vec![guild],
+            Vec::new(),
+            ServerSelection::Guild("g".into()),
+            None,
+            UiSettings::default(),
+        );
+        app.set_guild_channels("g", vec![channel]);
+        app
+    }
+
+    fn dispatch(app: &mut App, kind: &str, payload: serde_json::Value) {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        apply_event(
+            app,
+            AppEvent::Dispatch {
+                kind: kind.to_string(),
+                payload,
+            },
+            &tx,
+        );
+    }
+
+    #[test]
+    fn a_passive_update_moves_the_channels_newest_message() {
+        let mut app = app_with_guild();
+        dispatch(
+            &mut app,
+            "PASSIVE_UPDATES",
+            serde_json::json!({"guild_id": "g", "channels": {"c": "200"}}),
+        );
+        assert_eq!(app.channel_last_message_id("c").as_deref(), Some("200"));
+        // an older id is not taken: the cycle repeats what it last sent
+        dispatch(
+            &mut app,
+            "PASSIVE_UPDATES",
+            serde_json::json!({"guild_id": "g", "channels": {"c": "150"}}),
+        );
+        assert_eq!(app.channel_last_message_id("c").as_deref(), Some("200"));
+    }
+
+    #[test]
+    fn a_passive_update_carries_voice_states_without_naming_the_guild() {
+        let mut app = app_with_guild();
+        dispatch(
+            &mut app,
+            "PASSIVE_UPDATES",
+            serde_json::json!({
+                "guild_id": "g",
+                "voice_states": [{"user_id": "bob", "channel_id": "v"}],
+            }),
+        );
+        assert!(
+            app.voice_states
+                .get("g")
+                .is_some_and(|s| s.contains_key("bob"))
+        );
+        // channel_id null is how somebody leaving arrives
+        dispatch(
+            &mut app,
+            "PASSIVE_UPDATES",
+            serde_json::json!({
+                "guild_id": "g",
+                "voice_states": [{"user_id": "bob", "channel_id": null}],
+            }),
+        );
+        assert!(
+            app.voice_states
+                .get("g")
+                .is_some_and(|s| !s.contains_key("bob"))
+        );
+    }
+
+    #[test]
+    fn acknowledging_the_pins_elsewhere_clears_the_mark() {
+        let mut app = app_with_guild();
+        app.channels_with_new_pins.insert("c".into());
+        dispatch(
+            &mut app,
+            "CHANNEL_PINS_ACK",
+            serde_json::json!({"channel_id": "c", "timestamp": "2026-09-12T10:00:00.000Z"}),
+        );
+        assert!(!app.channels_with_new_pins.contains("c"));
+    }
+
+    #[test]
+    fn a_ping_dismissed_elsewhere_leaves_the_inbox() {
+        let mut app = app_with_guild();
+        app.open_pings();
+        let mut first = crate::api::types::MessageResponse::default();
+        first.id = "1".into();
+        let mut second = crate::api::types::MessageResponse::default();
+        second.id = "2".into();
+        app.set_pings_loaded(vec![first, second]);
+        app.pings_move(1);
+        dispatch(
+            &mut app,
+            "RECENT_MENTION_DELETE",
+            serde_json::json!({"message_id": "2"}),
+        );
+        assert_eq!(app.pings_messages().len(), 1);
+        assert_eq!(app.pings_messages()[0].id, "1");
+        // the cursor came back onto the row that is left
+        assert_eq!(app.pings_selected().map(|m| m.id.clone()), Some("1".into()));
     }
 }
