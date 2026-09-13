@@ -837,11 +837,13 @@ mod tests {
         app
     }
 
+    /// Drawn tall enough for every row the menu can hold, since it scrolls
+    /// with the cursor rather than shrinking.
     #[test]
     fn the_menu_offers_more_inside_a_community_than_outside_one() {
         let mut app = app();
         app.open_communities();
-        let s = drawn(&app, 70, 16);
+        let s = drawn(&app, 70, 40);
         assert!(s.contains("Join with an invite"), "{s}");
         assert!(s.contains("Make a community"), "{s}");
         assert!(s.contains("Browse the directory"), "{s}");
@@ -850,7 +852,7 @@ mod tests {
 
         let mut app = guild_app();
         app.open_communities();
-        let s = drawn(&app, 70, 16);
+        let s = drawn(&app, 70, 40);
         assert!(s.contains("Invites to this community"), "{s}");
         assert!(s.contains("Leave this community"), "{s}");
     }
