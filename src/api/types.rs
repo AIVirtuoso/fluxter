@@ -1048,6 +1048,11 @@ pub struct ReadyEvent {
         deserialize_with = "deserialize_lenient_vec"
     )]
     pub read_state: Vec<ReadStateResponse>,
+    /// The private notes the account holds, by the id of whoever each is
+    /// about. READY carries the whole record, so the note endpoints are
+    /// only needed to write one.
+    #[serde(default)]
+    pub notes: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

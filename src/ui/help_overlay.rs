@@ -101,7 +101,8 @@ Messages
            Esc closes, and + / x / B act on how you stand with them: + asks or
            accepts, x unfriends, turns down, takes back or unblocks, B blocks.
            The line at the bottom of the profile names whichever of the three
-           apply, so there is no guessing which.
+           apply, so there is no guessing which. n writes your own private note
+           about them: Enter saves it, an empty one deletes it, Esc cancels.
   f - forward selected (pick channel with Ctrl+K, optional note, Enter)
   e - react: opens emoji picker on selected message (Enter to send reaction, Esc cancels)
   Ctrl+E - edit your message (focuses input; Enter save, Esc cancel)

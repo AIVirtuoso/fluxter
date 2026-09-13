@@ -95,8 +95,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 /// themselves read, so the line never offers something that would do
 /// nothing.
 fn hints(app: &App, view: &ProfileView) -> String {
+    if view.note_input.is_some() {
+        return "type your note  ·  Backspace edits  ·  Enter saves (empty clears it)  ·  Esc cancel"
+            .to_string();
+    }
     let mut parts = vec!["↑/↓ scroll".to_string(), "p picture".to_string()];
     parts.extend(app.relationship_keys_for(&view.user_id).hints());
+    parts.push(
+        if app.note_for(&view.user_id).is_some() {
+            "n your note"
+        } else {
+            "n note them"
+        }
+        .to_string(),
+    );
     parts.push("Esc close".to_string());
     parts.join("  ·  ")
 }
@@ -343,6 +355,27 @@ fn build_lines(app: &App, view: &ProfileView, width: usize, avatar: bool) -> Vec
         }
     }
 
+    // The reader's own note about them, last, because it is the one thing
+    // here that nobody else can see. While it is being written the line
+    // carries the caret instead.
+    match view.note_input.as_deref() {
+        Some(typing) => {
+            lines.push(Line::from(vec![
+                label("Your note"),
+                Span::styled(typing.to_string(), text),
+                Span::styled("\u{2588}", Style::default().fg(crate::ui::theme::accent())),
+            ]));
+        }
+        None => {
+            if let Some(note) = app.note_for(&user.id) {
+                lines.push(Line::from(vec![
+                    label("Your note"),
+                    Span::styled(note.to_string(), text),
+                ]));
+            }
+        }
+    }
+
     lines
 }
 
@@ -493,6 +526,7 @@ mod hint_tests {
     fn view(user_id: &str) -> ProfileView {
         ProfileView {
             user_id: user_id.to_string(),
+            note_input: None,
             guild_id: None,
             user: UserPartialResponse {
                 id: user_id.to_string(),
@@ -606,5 +640,119 @@ mod tests {
             badges(&user, Some(&profile)).last(),
             Some(&"Lifetime premium")
         );
+    }
+}
+
+/// The reader's own note about somebody: the one thing on a profile that
+/// nobody else can see, and the only one that is written from here.
+#[cfg(test)]
+mod note_tests {
+    use super::*;
+    use crate::api::types::{UserPartialResponse, UserPrivateResponse};
+    use crate::app::ServerSelection;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn drawn(app: &App, w: u16, h: u16) -> String {
+        let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+        t.draw(|f| render(f, f.area(), app)).unwrap();
+        let buf = t.backend().buffer().clone();
+        (0..h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn app_with_profile() -> App {
+        let me = UserPrivateResponse {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            Default::default(),
+            me,
+            None,
+            Vec::new(),
+            Vec::new(),
+            ServerSelection::DirectMessages,
+            None,
+            Default::default(),
+        );
+        app.profile = Some(ProfileView {
+            user_id: "bob".into(),
+            note_input: None,
+            guild_id: None,
+            user: UserPartialResponse {
+                id: "bob".into(),
+                username: "bob".into(),
+                discriminator: "0001".into(),
+                ..Default::default()
+            },
+            state: ProfileState::Loading,
+            scroll: 0,
+        });
+        app
+    }
+
+    #[test]
+    fn a_stored_note_is_shown_and_the_key_says_so() {
+        let mut app = app_with_profile();
+        let out = drawn(&app, 80, 24);
+        assert!(out.contains("n note them"), "{out}");
+        assert!(!out.contains("Your note"), "{out}");
+
+        app.set_note("bob".into(), "met at the thing".into());
+        let out = drawn(&app, 80, 24);
+        assert!(out.contains("Your note"), "{out}");
+        assert!(out.contains("met at the thing"), "{out}");
+        assert!(out.contains("n your note"), "{out}");
+    }
+
+    #[test]
+    fn writing_one_starts_from_what_is_stored_and_clears_when_emptied() {
+        let mut app = app_with_profile();
+        app.set_note("bob".into(), "old note".into());
+        assert!(app.start_note_edit());
+        assert_eq!(app.note_input(), Some("old note"));
+        let out = drawn(&app, 80, 24);
+        assert!(out.contains("type your note"), "{out}");
+
+        for _ in 0..8 {
+            app.note_input_pop();
+        }
+        app.note_input_push('h');
+        app.note_input_push('i');
+        let (user_id, note) = app.take_note_edit().unwrap();
+        assert_eq!(user_id, "bob");
+        assert_eq!(note.as_deref(), Some("hi"));
+
+        // emptied: None, which is how the server is told to delete it
+        assert!(app.start_note_edit());
+        for _ in 0..8 {
+            app.note_input_pop();
+        }
+        let (_, note) = app.take_note_edit().unwrap();
+        assert!(note.is_none());
+    }
+
+    /// An empty note from the gateway is a cleared one, not a blank one.
+    #[test]
+    fn the_record_keeps_no_empty_notes() {
+        let mut app = app_with_profile();
+        app.set_note("bob".into(), "something".into());
+        assert!(app.note_for("bob").is_some());
+        app.set_note("bob".into(), String::new());
+        assert!(app.note_for("bob").is_none());
+
+        let mut record = std::collections::HashMap::new();
+        record.insert("bob".to_string(), String::new());
+        record.insert("ada".to_string(), "counts".to_string());
+        app.set_notes(record);
+        assert!(app.note_for("bob").is_none());
+        assert_eq!(app.note_for("ada"), Some("counts"));
     }
 }

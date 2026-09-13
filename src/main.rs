@@ -2439,7 +2439,32 @@ fn handle_key_event(
     }
 
     if app.profile.is_some() {
+        // writing a note takes the keys: every letter is part of it
+        if app.note_input().is_some() {
+            match key.code {
+                KeyCode::Esc => app.cancel_note_edit(),
+                KeyCode::Enter => {
+                    if let Some((user_id, note)) = app.take_note_edit() {
+                        app.set_note(user_id.clone(), note.clone().unwrap_or_default());
+                        app.set_status(match &note {
+                            Some(_) => "Note saved.",
+                            None => "Note cleared.",
+                        });
+                        spawn_set_note(client.clone(), event_tx.clone(), user_id, note);
+                    }
+                }
+                KeyCode::Backspace => app.note_input_pop(),
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app.note_input_push(c)
+                }
+                _ => {}
+            }
+            return;
+        }
         match key.code {
+            KeyCode::Char('n') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.start_note_edit();
+            }
             KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => app.dismiss_profile(),
             // p again: the picture full size, over the popup
             KeyCode::Char('p') => match app.profile_picture() {
@@ -4832,6 +4857,23 @@ fn spawn_mentions_dismiss(
                     "Failed to dismiss ping: {err}"
                 )));
             }
+        }
+    });
+}
+
+/// Store the reader's private note about somebody, or clear it. The
+/// gateway's USER_NOTE_UPDATE carries it to their other clients.
+fn spawn_set_note(
+    client: FluxerHttpClient,
+    event_tx: UnboundedSender<AppEvent>,
+    user_id: String,
+    note: Option<String>,
+) {
+    tokio::spawn(async move {
+        if let Err(err) = client.set_user_note(&user_id, note.as_deref()).await {
+            let _ = event_tx.send(AppEvent::ApiError(format!(
+                "Failed to save the note: {err}"
+            )));
         }
     });
 }

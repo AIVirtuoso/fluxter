@@ -1491,6 +1491,8 @@ pub struct Candidate {
 #[derive(Debug)]
 pub struct ProfileView {
     pub user_id: String,
+    /// The private note being typed, when the reader is writing one.
+    pub note_input: Option<String>,
     /// The guild the message was in: nickname, roles and guild profile
     /// come from there.
     pub guild_id: Option<String>,
@@ -1639,6 +1641,9 @@ pub struct App {
     pub relationships_version: u64,
     /// The message actions menu while it is open.
     pub message_actions: Option<MessageActionsView>,
+    /// The reader's private notes, by the id of whoever each is about.
+    /// READY carries the record and USER_NOTE_UPDATE keeps it current.
+    pub notes: HashMap<String, String>,
     /// The pinned-messages overlay while it is open.
     pub pins: Option<PinsView>,
     /// The bookmarked-messages overlay while it is open.
@@ -1894,6 +1899,7 @@ impl App {
             relationships: HashMap::new(),
             relationships_version: 0,
             message_actions: None,
+            notes: HashMap::new(),
             pins: None,
             saved: None,
             reaction_users: None,
@@ -3737,6 +3743,7 @@ impl App {
         self.dismiss_image_preview();
         self.profile = Some(ProfileView {
             user_id: user.id.clone(),
+            note_input: None,
             guild_id: guild_id.clone(),
             user,
             state: ProfileState::Loading,
@@ -3984,6 +3991,82 @@ impl App {
         };
         view.selected = 0;
         std::mem::take(messages).into_iter().map(|m| m.id).collect()
+    }
+
+    /// The private note about somebody, when there is one.
+    pub fn note_for(&self, user_id: &str) -> Option<&str> {
+        self.notes
+            .get(user_id)
+            .map(|s| s.as_str())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Take the whole record, as READY sends it.
+    pub fn set_notes(&mut self, notes: HashMap<String, String>) {
+        self.notes = notes.into_iter().filter(|(_, v)| !v.is_empty()).collect();
+    }
+
+    /// One note changed, here or in another client. An empty note is a
+    /// cleared one.
+    pub fn set_note(&mut self, user_id: String, note: String) {
+        if note.is_empty() {
+            self.notes.remove(&user_id);
+        } else {
+            self.notes.insert(user_id, note);
+        }
+    }
+
+    /// Start writing the note about whoever the profile is showing, with
+    /// what is stored already there to edit.
+    pub fn start_note_edit(&mut self) -> bool {
+        let Some(view) = self.profile.as_ref() else {
+            return false;
+        };
+        let current = self.note_for(&view.user_id).unwrap_or_default().to_string();
+        if let Some(view) = self.profile.as_mut() {
+            view.note_input = Some(current);
+        }
+        true
+    }
+
+    /// The note being typed, if one is.
+    pub fn note_input(&self) -> Option<&str> {
+        self.profile.as_ref()?.note_input.as_deref()
+    }
+
+    pub fn note_input_push(&mut self, c: char) {
+        if let Some(view) = self.profile.as_mut()
+            && let Some(text) = view.note_input.as_mut()
+            && text.chars().count() < 256
+        {
+            text.push(c);
+        }
+    }
+
+    pub fn note_input_pop(&mut self) {
+        if let Some(view) = self.profile.as_mut()
+            && let Some(text) = view.note_input.as_mut()
+        {
+            text.pop();
+        }
+    }
+
+    pub fn cancel_note_edit(&mut self) {
+        if let Some(view) = self.profile.as_mut() {
+            view.note_input = None;
+        }
+    }
+
+    /// Finish writing: who it is about and what to store, with None for a
+    /// note that was emptied, which is how one is cleared.
+    pub fn take_note_edit(&mut self) -> Option<(String, Option<String>)> {
+        let view = self.profile.as_mut()?;
+        let text = view.note_input.take()?;
+        let trimmed = text.trim().to_string();
+        Some((
+            view.user_id.clone(),
+            (!trimmed.is_empty()).then_some(trimmed),
+        ))
     }
 
     pub fn dismiss_profile(&mut self) {

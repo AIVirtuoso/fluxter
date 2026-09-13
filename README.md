@@ -743,6 +743,18 @@ from the server. That happens on its own; there is nothing to press.
 A name you give a friend with **n** is stored on the server, so it
 follows you to the web client. An empty one drops it again.
 
+## A private note about somebody
+
+**n** on a profile writes your own note about whoever it is showing, up to
+256 characters, and **Enter** saves it. The note appears on their profile
+as **Your note** and nowhere else: nobody else can see it, not even them.
+Emptying it and pressing **Enter** deletes it, and **Esc** leaves it as it
+was.
+
+The notes arrive with everything else at startup -- the gateway sends the
+whole record -- so they cost no request to read, and one written in another
+client shows up here as it happens.
+
 ## Presence
 
 Fluxer tells a client who is about through `PRESENCE_UPDATE`, and through
