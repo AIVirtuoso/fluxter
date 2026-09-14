@@ -63,6 +63,8 @@ pub enum GatewayCommand {
         connection_id: Option<String>,
         self_mute: bool,
         self_deaf: bool,
+        /// Whether this connection is sharing a screen.
+        self_stream: bool,
         /// The streams this connection is watching, by stream key; the
         /// server counts viewers by it. Empty when watching nothing.
         viewer_stream_keys: Vec<String>,
@@ -345,6 +347,7 @@ async fn run_connection(
                         connection_id,
                         self_mute,
                         self_deaf,
+                        self_stream,
                         viewer_stream_keys,
                     }) => {
                         // every field is sent, null included: null is
@@ -357,6 +360,7 @@ async fn run_connection(
                             "self_mute": self_mute,
                             "self_deaf": self_deaf,
                             "self_video": false,
+                            "self_stream": self_stream,
                             "viewer_stream_keys": viewer_stream_keys,
                         });
                         if let Err(e) = send_op_json(&mut write, OP_VOICE_STATE, d).await {

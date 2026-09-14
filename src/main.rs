@@ -4562,6 +4562,19 @@ fn run_voice_action(
             // the server counts viewers of a stream by the keys we send
             resend_voice_state(app, gateway_cmd_tx);
         }
+        crate::app::VoiceAction::Share | crate::app::VoiceAction::StopSharing => {
+            let Some(sharing) = app.toggle_voice_sharing() else {
+                return;
+            };
+            app.dismiss_voice_menu();
+            app.set_status(if sharing {
+                "Sharing: the desktop's chooser picks the screen or window; the debug log says how it went."
+            } else {
+                "No longer sharing your screen."
+            });
+            // the voice state says so, which is how others see a stream
+            resend_voice_state(app, gateway_cmd_tx);
+        }
         crate::app::VoiceAction::CopyGrant => {
             let Some(connection) = app.voice.clone() else {
                 return;
@@ -5316,13 +5329,14 @@ fn send_voice_state(
     channel_id: Option<String>,
     guild_id: Option<String>,
 ) {
-    let (connection_id, self_mute, self_deaf) = match app.voice.as_ref() {
+    let (connection_id, self_mute, self_deaf, self_stream) = match app.voice.as_ref() {
         Some(connection) => (
             connection.connection_id.clone(),
             connection.self_mute,
             connection.self_deaf,
+            connection.sharing,
         ),
-        None => (None, false, false),
+        None => (None, false, false, false),
     };
     let _ = gateway_cmd_tx.send(GatewayCommand::VoiceState {
         guild_id,
@@ -5330,6 +5344,7 @@ fn send_voice_state(
         connection_id,
         self_mute,
         self_deaf,
+        self_stream,
         viewer_stream_keys: app.viewer_stream_keys(),
     });
 }

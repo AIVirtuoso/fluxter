@@ -118,7 +118,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             (Some(name), false) => format!("{name} (running)"),
             (None, _) => "none".to_string(),
         };
-        let rows: [(&str, String); 5] = [
+        let rows: [(&str, String); 6] = [
             ("Media server", endpoint),
             (
                 "End-to-end encrypted",
@@ -128,6 +128,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             (
                 "Watching video",
                 if connection.watching { "yes" } else { "no" }.to_string(),
+            ),
+            (
+                "Sharing a screen",
+                if connection.sharing { "yes" } else { "no" }.to_string(),
             ),
             (
                 "Connection",
@@ -345,6 +349,9 @@ mod tests {
         assert!(drawn(&app, 70, 18).contains("Watch video and screen shares"));
         assert_eq!(app.toggle_voice_watching(), Some(true));
         assert!(drawn(&app, 70, 18).contains("Stop watching video"));
+        assert!(drawn(&app, 70, 18).contains("Share your screen"));
+        assert_eq!(app.toggle_voice_sharing(), Some(true));
+        assert!(drawn(&app, 70, 18).contains("Stop sharing your screen"));
         // the streams being watched are named by key for the server
         app.update_voice_state(crate::api::types::VoiceStateResponse {
             guild_id: Some("g1".to_string()),

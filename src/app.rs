@@ -1996,6 +1996,8 @@ pub struct VoiceConnection {
     pub media_program: Option<String>,
     /// Whether cameras and screen shares are being received and shown.
     pub watching: bool,
+    /// Whether a screen of this machine is being shared.
+    pub sharing: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2038,6 +2040,9 @@ pub enum VoiceAction {
     /// Receive and show cameras and screen shares.
     Watch,
     StopWatching,
+    /// Share a screen or a window of this machine.
+    Share,
+    StopSharing,
     CopyGrant,
 }
 
@@ -2055,6 +2060,8 @@ impl VoiceAction {
             Self::Leave => "Leave",
             Self::Watch => "Watch video and screen shares",
             Self::StopWatching => "Stop watching video",
+            Self::Share => "Share your screen",
+            Self::StopSharing => "Stop sharing your screen",
             Self::CopyGrant => "Connection details",
         }
     }
@@ -9308,6 +9315,11 @@ impl App {
                     } else {
                         VoiceAction::Watch
                     });
+                    out.push(if connection.sharing {
+                        VoiceAction::StopSharing
+                    } else {
+                        VoiceAction::Share
+                    });
                 }
                 if connection.grant.is_some() {
                     out.push(VoiceAction::CopyGrant);
@@ -9367,6 +9379,7 @@ impl App {
             media_exited: false,
             media_program: None,
             watching: false,
+            sharing: false,
         });
     }
 
@@ -9421,7 +9434,20 @@ impl App {
             connection.media_exited = false;
             connection.media_program = Some(program);
             connection.watching = false;
+            connection.sharing = false;
         }
+    }
+
+    /// Start or stop sharing a screen, and tell the program. Returns the
+    /// new state, None when there is no connection.
+    pub fn toggle_voice_sharing(&mut self) -> Option<bool> {
+        let connection = self.voice.as_mut()?;
+        connection.sharing = !connection.sharing;
+        let sharing = connection.sharing;
+        if let Some(media) = &mut self.voice_media {
+            media.send(if sharing { "screen" } else { "noscreen" });
+        }
+        Some(sharing)
     }
 
     /// Start or stop receiving video, and tell the program. Returns the

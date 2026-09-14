@@ -542,6 +542,7 @@ and what is going on:
 | **Answer the call** / **Turn the call down** | Something is ringing for you |
 | **Mute** / **Deafen** and their undos | You are in a call |
 | **Watch video and screen shares** / **Stop watching video** | A sound program is carrying the call |
+| **Share your screen** / **Stop sharing your screen** | A sound program is carrying the call |
 | **Connection details** | You are in a call and the grant has arrived |
 | **Leave** | You are in a call |
 
@@ -590,6 +591,26 @@ console there is no window to open, and nothing has been tried there
 yet. On an end-to-end encrypted channel only H.264 video can be
 decrypted here; an encrypted VP8 camera is reported and skipped.
 
+**Share your screen** goes through the desktop portal, the same door a
+browser uses: fluxter-phone asks `org.freedesktop.portal.ScreenCast` for
+a screen or a window, the portal's own chooser comes up (on wlroots
+compositors that is xdg-desktop-portal-wlr with whatever it is
+configured to run, slurp and fuzzel say), and the PipeWire stream it
+hands back is encoded by **GStreamer** (`pipewiresrc` into `x264enc`,
+baseline H.264 at low delay) and published as the screen share source.
+The voice state says `self_stream`, so others see the stream. The Nix
+package bundles GStreamer with the PipeWire source and the x264
+encoder for this; `FLUXTER_PHONE_SCREEN` names another capture command
+(`{fd}` is the portal's PipeWire connection, `{node}` the stream's node,
+raw H.264 expected on standard output). In a community the STREAM
+permission is needed, or the server clears the flag. Dismissing the
+chooser leaves the call as it was; the debug log says so.
+
+    fluxter-phone screen-test 5 /tmp/screen.h264
+
+tries the whole capture outside a call, five seconds into a file that
+`ffplay -f h264 /tmp/screen.h264` plays back.
+
 **Connection details** copies the media server's URL and the token to
 the clipboard (or the cut buffer, where there is no clipboard) and shows
 what can be shown on screen: the server, whether the channel is
@@ -615,8 +636,8 @@ Three placeholders are filled in: `{url}`, `{token}`, and `{key}` for the
 end-to-end key where the channel has one (empty otherwise). **The command
 is split into arguments before the values go in**, so nothing the server
 sends can add an argument of its own however it is punctuated. The
-program is told `mute`, `unmute`, `deafen`, `undeafen`, `video` and
-`novideo` on its standard input, one per line, and is asked to leave by
+program is told `mute`, `unmute`, `deafen`, `undeafen`, `video`,
+`novideo`, `screen` and `noscreen` on its standard input, one per line, and is asked to leave by
 that input being closed
 (it is killed a second later if it has not gone). Whatever it prints on
 its standard output goes to the debug log a line at a time, so it must
@@ -1885,7 +1906,8 @@ instead of a display, which is how the console renderer is tested.
 - **Voice** carries sound and video only through fluxter-phone (or
   another program named in `voice_command`): the client itself never
   speaks WebRTC, and video opens in windows of its own rather than in the
-  terminal. Nothing publishes a camera or a screen from here.
+  terminal. A screen can be shared through the desktop portal; nothing
+  publishes a camera from here.
 - Some communities answer the member list request with a gateway
   timeout (504) from the server's own member service. The client keeps
   the pages that arrived, says in plain words that the list is

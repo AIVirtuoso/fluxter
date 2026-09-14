@@ -3,6 +3,7 @@ module github.com/AIVirtuoso/fluxter/phone
 go 1.26
 
 require (
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/livekit/protocol v1.49.0
 	github.com/livekit/server-sdk-go/v2 v2.18.1
 	github.com/pion/rtp v1.10.5

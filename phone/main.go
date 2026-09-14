@@ -16,8 +16,16 @@
 // then encrypted and decrypted the way the web client does it.
 //
 // Standard input is the control line: `mute`, `unmute`, `deafen`,
-// `undeafen`, `video`, `novideo` and `quit`, one per line; end of input
-// quits as well. Video (cameras and screen shares) is not subscribed to
+// `undeafen`, `video`, `novideo`, `screen`, `noscreen` and `quit`, one
+// per line; end of input quits as well. `screen` shares a screen or a
+// window: the desktop portal's own chooser picks which, and GStreamer
+// encodes the PipeWire stream it hands back (FLUXTER_PHONE_SCREEN
+// replaces that command).
+//
+//	fluxter-phone screen-test SECONDS FILE
+//
+// tries the screen capture on its own, outside any call, writing raw
+// H.264 to FILE. Video (cameras and screen shares) is not subscribed to
 // until `video` is asked for; each track then gets a window of its own
 // through ffplay or mpv, replaceable with FLUXTER_PHONE_VIDEO_PLAYER.
 // Standard output reports what happens, one line each, and never the
@@ -81,7 +89,24 @@ var defaultVideoPlayers = [][]string{
 		"--title={title}", "--demuxer-lavf-format={format}", "-"},
 }
 
+// The screen capture: the portal's PipeWire stream, given as file
+// descriptor `{fd}` and node `{node}`, encoded to raw H.264 on standard
+// output. Baseline at a low delay, a keyframe every second at most, so a
+// viewer who arrives late sees a picture soon.
+var defaultScreen = []string{
+	"gst-launch-1.0", "-q",
+	"pipewiresrc", "fd={fd}", "path={node}", "do-timestamp=true",
+	"!", "videoconvert", "!", "video/x-raw,format=I420",
+	"!", "x264enc", "tune=zerolatency", "speed-preset=ultrafast", "key-int-max=30", "bitrate=2500",
+	"!", "video/x-h264,stream-format=byte-stream,profile=baseline",
+	"!", "fdsink", "fd=1",
+}
+
 func main() {
+	if len(os.Args) == 4 && os.Args[1] == "screen-test" {
+		screenTest(os.Args[2], os.Args[3])
+		return
+	}
 	if len(os.Args) < 3 || len(os.Args) > 4 {
 		fmt.Fprintln(os.Stderr, "usage: fluxter-phone URL TOKEN [KEY]")
 		os.Exit(2)
@@ -142,6 +167,10 @@ type phone struct {
 
 	mic    *exec.Cmd
 	micPub *lksdk.LocalTrackPublication
+
+	screen    *screenCast
+	screenCmd *exec.Cmd
+	screenPub *lksdk.LocalTrackPublication
 
 	deaf     atomic.Bool
 	watching atomic.Bool
@@ -482,6 +511,10 @@ func (p *phone) control(r io.Reader, stop func()) {
 			p.setWatching(true)
 		case "novideo":
 			p.setWatching(false)
+		case "screen":
+			go p.startScreen()
+		case "noscreen":
+			p.stopScreen()
 		case "quit":
 			stop()
 			return
@@ -490,7 +523,140 @@ func (p *phone) control(r io.Reader, stop func()) {
 	stop()
 }
 
+// Share a screen: the portal picks it, a capture program encodes it,
+// the room gets it as the screen share source.
+func (p *phone) startScreen() {
+	p.mu.Lock()
+	already := p.screen != nil
+	p.mu.Unlock()
+	if already {
+		return
+	}
+	sc, err := openScreenCast()
+	if err != nil {
+		say("screen not shared: %v", err)
+		return
+	}
+	argv := screenCommand(sc)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.ExtraFiles = []*os.File{sc.pipe} // fd 3 in the child
+	out, err := cmd.StdoutPipe()
+	if err == nil {
+		err = cmd.Start()
+	}
+	if err != nil {
+		sc.close()
+		say("screen not shared: %s would not start: %v", argv[0], err)
+		return
+	}
+	opts := []lksdk.ReaderSampleProviderOption{
+		lksdk.ReaderTrackWithFrameDuration(33 * time.Millisecond),
+		lksdk.ReaderTrackWithOnWriteComplete(func() { say("screen capture ended") }),
+	}
+	pub := &lksdk.TrackPublicationOptions{
+		Name:   "screen",
+		Source: livekit.TrackSource_SCREEN_SHARE,
+	}
+	if p.keys != nil {
+		enc, err := lksdk.NewFrameEncryptor(p.keys, lksdk.CodecH264)
+		if err != nil {
+			_ = cmd.Process.Kill()
+			sc.close()
+			say("screen not shared: %v", err)
+			return
+		}
+		opts = append(opts, lksdk.ReaderTrackWithSampleOptions(lksdk.WithFrameEncryptor(enc)))
+		pub.Encryption = livekit.Encryption_GCM
+	}
+	track, err := lksdk.NewLocalReaderTrack(out, webrtc.MimeTypeH264, opts...)
+	if err == nil {
+		p.screenPub, err = p.room.LocalParticipant.PublishTrack(track, pub)
+	}
+	if err != nil {
+		_ = cmd.Process.Kill()
+		sc.close()
+		say("screen not shared: %v", err)
+		return
+	}
+	p.mu.Lock()
+	p.screen, p.screenCmd = sc, cmd
+	p.mu.Unlock()
+	say("sharing the screen (%s, node %d)", argv[0], sc.node)
+}
+
+func (p *phone) stopScreen() {
+	p.mu.Lock()
+	sc, cmd, pub := p.screen, p.screenCmd, p.screenPub
+	p.screen, p.screenCmd, p.screenPub = nil, nil, nil
+	p.mu.Unlock()
+	if sc == nil {
+		return
+	}
+	if pub != nil && p.room != nil {
+		_ = p.room.LocalParticipant.UnpublishTrack(pub.SID())
+	}
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		done := make(chan struct{})
+		go func() { _ = cmd.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			_ = cmd.Process.Kill()
+		}
+	}
+	sc.close()
+	say("no longer sharing the screen")
+}
+
+func screenCommand(sc *screenCast) []string {
+	argv := defaultScreen
+	if custom := strings.Fields(os.Getenv("FLUXTER_PHONE_SCREEN")); len(custom) > 0 {
+		argv = custom
+	}
+	out := make([]string, len(argv))
+	for i, part := range argv {
+		out[i] = strings.ReplaceAll(strings.ReplaceAll(part, "{fd}", "3"), "{node}", fmt.Sprint(sc.node))
+	}
+	return out
+}
+
+// `fluxter-phone screen-test SECONDS FILE`: the portal, the capture and
+// the encoder on their own, to check the setup without a call.
+func screenTest(seconds, file string) {
+	n, err := time.ParseDuration(seconds + "s")
+	if err != nil {
+		fail("seconds: %v", err)
+	}
+	sc, err := openScreenCast()
+	if err != nil {
+		fail("portal: %v", err)
+	}
+	defer sc.close()
+	say("portal gave node %d", sc.node)
+	f, err := os.Create(file)
+	if err != nil {
+		fail("%v", err)
+	}
+	defer f.Close()
+	argv := screenCommand(sc)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.ExtraFiles = []*os.File{sc.pipe}
+	cmd.Stdout = f
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		fail("%s: %v", argv[0], err)
+	}
+	say("capturing with %s for %s", argv[0], n)
+	time.Sleep(n)
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	_ = cmd.Wait()
+	info, _ := f.Stat()
+	say("wrote %d bytes to %s (play with: ffplay -f h264 %s)", info.Size(), file, file)
+}
+
 func (p *phone) shutdown() {
+	p.stopScreen()
 	if p.room != nil {
 		p.room.Disconnect()
 	}

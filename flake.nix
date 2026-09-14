@@ -49,10 +49,21 @@
         pname = "fluxter-phone";
         version = cargoToml.package.version;
         src = ./phone;
-        vendorHash = "sha256-8mkMF5Jw0Z7jIYc+AmzKmiwaTKrek3wxPIE0eS1BqNs=";
+        vendorHash = "sha256-iNa8rFksHlxRe2QihkaSW3XmwOlYaKXcyhah+y59wOQ=";
         env.CGO_ENABLED = 0;
-        # go names the binary after the directory
-        postInstall = "mv $out/bin/phone $out/bin/fluxter-phone";
+        nativeBuildInputs = [pkgs.makeWrapper];
+        # go names the binary after the directory. Sharing a screen encodes
+        # the portal's PipeWire stream with GStreamer: its launcher, the
+        # PipeWire source and the x264 encoder ride along, since nothing
+        # else on a system is likely to have exactly those.
+        postInstall = let
+          gstPlugins = with pkgs; [gst_all_1.gstreamer gst_all_1.gst-plugins-base gst_all_1.gst-plugins-ugly pipewire];
+        in ''
+          mv $out/bin/phone $out/bin/fluxter-phone
+          wrapProgram $out/bin/fluxter-phone \
+            --suffix PATH : ${pkgs.lib.makeBinPath [pkgs.gst_all_1.gstreamer]} \
+            --suffix GST_PLUGIN_SYSTEM_PATH_1_0 : ${pkgs.lib.makeSearchPathOutput "out" "lib/gstreamer-1.0" gstPlugins}
+        '';
         meta = {
           description = "Carries the sound of a Fluxer voice call for fluxter";
           license = pkgs.lib.licenses.gpl3Plus;
