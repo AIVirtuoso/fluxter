@@ -96,17 +96,28 @@ var defaultVideoPlayers = [][]string{
 
 // The screen capture: the portal's PipeWire stream, given as file
 // descriptor `{fd}` and node `{node}`, encoded to raw H.264 on standard
-// output. The portal sends a frame only when the screen changes, so the
-// rate is made a steady 30 a second first (a still screen repeats its
-// last frame, which costs the encoder next to nothing); that keeps a
-// keyframe coming every second, so a viewer who arrives late, or the
-// preview, sees a picture within one. Baseline at a low delay.
+// output.
+//
+// Three things about the shape of it. The portal sends a frame only when
+// the screen changes, so the rate is made a steady 15 a second first (a
+// still screen repeats its last frame, which costs the encoder next to
+// nothing), and a keyframe comes every second, so a viewer who arrives
+// late, or the preview, sees a picture within one. The picture is scaled
+// to fit 1280x720, which is what the server admits from an ordinary
+// account, and a fraction of the encoding work of a whole desktop. And
+// every frame is one slice, with `sliced-threads=false`: the LiveKit SDK
+// sends each H.264 slice as a frame, paced 33 ms apart whatever the
+// real rate, so five slices a frame would go out five times too slowly
+// and the delay would grow without end. That also caps the rate at 30.
 var defaultScreen = []string{
 	"gst-launch-1.0", "-q",
 	"pipewiresrc", "fd={fd}", "path={node}", "do-timestamp=true",
-	"!", "videorate", "!", "video/x-raw,framerate=30/1",
+	"!", "queue", "max-size-buffers=2", "leaky=downstream",
+	"!", "videorate", "!", "video/x-raw,framerate=15/1",
+	"!", "videoscale", "!", "video/x-raw,width=1280,height=720,pixel-aspect-ratio=1/1",
 	"!", "videoconvert", "!", "video/x-raw,format=I420",
-	"!", "x264enc", "tune=zerolatency", "speed-preset=ultrafast", "key-int-max=30", "bitrate=2500",
+	"!", "x264enc", "tune=zerolatency", "speed-preset=ultrafast", "sliced-threads=false", "threads=1",
+	"key-int-max=15", "bitrate=2000",
 	"!", "video/x-h264,stream-format=byte-stream,profile=baseline",
 	"!", "fdsink", "fd=1",
 }
