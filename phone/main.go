@@ -171,6 +171,10 @@ type phone struct {
 	screen    *screenCast
 	screenCmd *exec.Cmd
 	screenPub *lksdk.LocalTrackPublication
+	// a copy of the shared screen for a window of its own, while
+	// watching video: the room never sends one's own track back
+	screenCopy gate
+	preview    *player
 
 	deaf     atomic.Bool
 	watching atomic.Bool
@@ -464,6 +468,7 @@ func (p *phone) setWatching(on bool) {
 	} else {
 		say("not watching video")
 	}
+	p.setPreview()
 }
 
 func (p *phone) trackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
@@ -523,6 +528,58 @@ func (p *phone) control(r io.Reader, stop func()) {
 	stop()
 }
 
+// A writer that can be pointed at a sink, or at nothing, while the
+// stream runs. Errors drop the sink rather than the stream.
+type gate struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (g *gate) Write(b []byte) (int, error) {
+	g.mu.Lock()
+	w := g.w
+	g.mu.Unlock()
+	if w != nil {
+		if _, err := w.Write(b); err != nil {
+			g.set(nil)
+		}
+	}
+	return len(b), nil
+}
+
+func (g *gate) set(w io.Writer) {
+	g.mu.Lock()
+	g.w = w
+	g.mu.Unlock()
+}
+
+// The last few lines a program wrote to its standard error, for saying
+// why it ended.
+type tail struct {
+	mu   sync.Mutex
+	text string
+}
+
+func (t *tail) Write(b []byte) (int, error) {
+	t.mu.Lock()
+	t.text += string(b)
+	if len(t.text) > 2000 {
+		t.text = t.text[len(t.text)-2000:]
+	}
+	t.mu.Unlock()
+	return len(b), nil
+}
+
+func (t *tail) last() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	lines := strings.Split(strings.TrimSpace(t.text), "\n")
+	if len(lines) == 0 || lines[len(lines)-1] == "" {
+		return ""
+	}
+	return lines[len(lines)-1]
+}
+
 // Share a screen: the portal picks it, a capture program encodes it,
 // the room gets it as the screen share source.
 func (p *phone) startScreen() {
@@ -540,6 +597,8 @@ func (p *phone) startScreen() {
 	argv := screenCommand(sc)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.ExtraFiles = []*os.File{sc.pipe} // fd 3 in the child
+	stderr := &tail{}
+	cmd.Stderr = stderr
 	out, err := cmd.StdoutPipe()
 	if err == nil {
 		err = cmd.Start()
@@ -549,9 +608,28 @@ func (p *phone) startScreen() {
 		say("screen not shared: %s would not start: %v", argv[0], err)
 		return
 	}
+	// the stream goes to the room and, through the gate, to a preview
+	stream := struct {
+		io.Reader
+		io.Closer
+	}{io.TeeReader(out, &p.screenCopy), out}
 	opts := []lksdk.ReaderSampleProviderOption{
 		lksdk.ReaderTrackWithFrameDuration(33 * time.Millisecond),
-		lksdk.ReaderTrackWithOnWriteComplete(func() { say("screen capture ended") }),
+		lksdk.ReaderTrackWithOnWriteComplete(func() {
+			// which end gave up: the capture program, or the reader
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			select {
+			case err := <-done:
+				if err != nil {
+					say("screen capture ended: %s: %v (%s)", argv[0], err, stderr.last())
+				} else {
+					say("screen capture ended: %s finished (%s)", argv[0], stderr.last())
+				}
+			case <-time.After(300 * time.Millisecond):
+				say("screen capture ended: the stream could not be read while %s still ran", argv[0])
+			}
+		}),
 	}
 	pub := &lksdk.TrackPublicationOptions{
 		Name:   "screen",
@@ -568,7 +646,7 @@ func (p *phone) startScreen() {
 		opts = append(opts, lksdk.ReaderTrackWithSampleOptions(lksdk.WithFrameEncryptor(enc)))
 		pub.Encryption = livekit.Encryption_GCM
 	}
-	track, err := lksdk.NewLocalReaderTrack(out, webrtc.MimeTypeH264, opts...)
+	track, err := lksdk.NewLocalReaderTrack(stream, webrtc.MimeTypeH264, opts...)
 	if err == nil {
 		p.screenPub, err = p.room.LocalParticipant.PublishTrack(track, pub)
 	}
@@ -582,6 +660,50 @@ func (p *phone) startScreen() {
 	p.screen, p.screenCmd = sc, cmd
 	p.mu.Unlock()
 	say("sharing the screen (%s, node %d)", argv[0], sc.node)
+	p.setPreview()
+}
+
+// A window showing one's own shared screen, while both sharing and
+// watching video; closed as soon as either stops. It joins the stream
+// mid-way and shows a picture at the next keyframe, within a second.
+func (p *phone) setPreview() {
+	p.mu.Lock()
+	sharing := p.screen != nil
+	current := p.preview
+	p.mu.Unlock()
+	want := sharing && p.watching.Load()
+	if want == (current != nil) {
+		return
+	}
+	if !want {
+		p.screenCopy.set(nil)
+		p.mu.Lock()
+		p.preview = nil
+		p.mu.Unlock()
+		current.stop()
+		say("preview closed")
+		return
+	}
+	argv, err := videoPlayerCommand("your screen", "h264")
+	if err != nil {
+		say("no preview: %v", err)
+		return
+	}
+	pl, err := startPlayer(argv)
+	if err != nil {
+		say("no preview: %v", err)
+		return
+	}
+	pl.writeRTP = func(*rtp.Packet) error { return nil }
+	go func() {
+		_ = pl.cmd.Wait()
+		close(pl.done)
+	}()
+	p.mu.Lock()
+	p.preview = pl
+	p.mu.Unlock()
+	p.screenCopy.set(pl.in)
+	say("preview of your screen (%s)", argv[0])
 }
 
 func (p *phone) stopScreen() {
@@ -607,6 +729,7 @@ func (p *phone) stopScreen() {
 	}
 	sc.close()
 	say("no longer sharing the screen")
+	p.setPreview()
 }
 
 func screenCommand(sc *screenCast) []string {

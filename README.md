@@ -604,7 +604,10 @@ encoder for this; `FLUXTER_PHONE_SCREEN` names another capture command
 (`{fd}` is the portal's PipeWire connection, `{node}` the stream's node,
 raw H.264 expected on standard output). In a community the STREAM
 permission is needed, or the server clears the flag. Dismissing the
-chooser leaves the call as it was; the debug log says so.
+chooser leaves the call as it was; the debug log says so. The room
+never sends your own track back, so while you share **and** watch video
+a window titled `your screen` shows what is going out, and closes when
+either stops.
 
     fluxter-phone screen-test 5 /tmp/screen.h264
 
