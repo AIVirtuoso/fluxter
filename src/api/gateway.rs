@@ -63,6 +63,11 @@ pub enum GatewayCommand {
         connection_id: Option<String>,
         self_mute: bool,
         self_deaf: bool,
+        /// Whether this connection is sharing a screen.
+        self_stream: bool,
+        /// The streams this connection is watching, by stream key; the
+        /// server counts viewers by it. Empty when watching nothing.
+        viewer_stream_keys: Vec<String>,
     },
     Shutdown,
 }
@@ -86,10 +91,20 @@ struct GatewayClose {
     reason: String,
 }
 
+/// What IDENTIFY says about this session beyond the token.
+#[derive(Debug, Clone, Default)]
+pub struct IdentifyOptions {
+    /// The community to have ready first, if any.
+    pub initial_guild_id: Option<String>,
+    /// Whether the session can handle an end-to-end encrypted voice
+    /// channel's key (it can when a sound program will run).
+    pub e2ee_capable: bool,
+}
+
 pub async fn run_gateway(
     endpoint: String,
     token: String,
-    initial_guild_id: Option<String>,
+    identify: IdentifyOptions,
     mut command_rx: UnboundedReceiver<GatewayCommand>,
     event_tx: UnboundedSender<AppEvent>,
 ) -> Result<()> {
@@ -131,7 +146,7 @@ pub async fn run_gateway(
         let outcome = run_connection(
             stream,
             &token,
-            initial_guild_id.clone(),
+            &identify,
             &mut resume_session_id,
             &mut last_sequence,
             &mut command_rx,
@@ -210,7 +225,7 @@ async fn run_connection(
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
     token: &str,
-    initial_guild_id: Option<String>,
+    identify: &IdentifyOptions,
     resume_session_id: &mut Option<String>,
     last_sequence: &mut u64,
     command_rx: &mut UnboundedReceiver<GatewayCommand>,
@@ -240,9 +255,13 @@ async fn run_connection(
                 os: std::env::consts::OS.to_string(),
                 browser: "fluxter".to_string(),
                 device: "fluxter".to_string(),
+                e2ee_capable: identify.e2ee_capable,
             },
             flags: 0,
-            initial_guild_id: initial_guild_id.filter(|id| !id.trim().is_empty()),
+            initial_guild_id: identify
+                .initial_guild_id
+                .clone()
+                .filter(|id| !id.trim().is_empty()),
         };
         send_payload(&mut write, OP_IDENTIFY, &payload).await?;
     }
@@ -328,6 +347,8 @@ async fn run_connection(
                         connection_id,
                         self_mute,
                         self_deaf,
+                        self_stream,
+                        viewer_stream_keys,
                     }) => {
                         // every field is sent, null included: null is
                         // what means "leave" and "the DM context", so
@@ -339,6 +360,8 @@ async fn run_connection(
                             "self_mute": self_mute,
                             "self_deaf": self_deaf,
                             "self_video": false,
+                            "self_stream": self_stream,
+                            "viewer_stream_keys": viewer_stream_keys,
                         });
                         if let Err(e) = send_op_json(&mut write, OP_VOICE_STATE, d).await {
                             let _ = event_tx.send(AppEvent::ApiError(format!(

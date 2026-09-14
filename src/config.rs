@@ -167,16 +167,23 @@ pub struct MediaSettings {
     /// Fluxer's voice media is LiveKit, and this client does not speak
     /// WebRTC itself: it joins, leaves, mutes and keeps the bookkeeping,
     /// and hands the grant to this program, the same way audio and
-    /// notifications are handed to one. Empty means no program, and the
-    /// client stays in the channel without carrying any sound.
+    /// notifications are handed to one. Empty means fluxter-phone, the
+    /// program that ships with the client, when it is on PATH; otherwise
+    /// no program, and the client stays in the channel without carrying
+    /// any sound.
     ///
-    /// The command is whitespace-separated and takes three placeholders:
-    /// `{url}` the LiveKit address, `{token}` the grant, and `{key}` the
-    /// end-to-end key where the channel has one. For example:
+    /// The command is whitespace-separated, without quoting, and takes
+    /// three placeholders: `{url}` the LiveKit address, `{token}` the
+    /// grant, and `{key}` the end-to-end key where the channel has one
+    /// (empty otherwise). The program is told `mute`, `unmute`, `deafen`
+    /// and `undeafen` on its standard input, one per line, and is asked
+    /// to leave by that input being closed; whatever it prints on its
+    /// standard output goes to the debug log, so it must never print the
+    /// token. The default is the same as:
     ///
     /// ```toml
     /// [media]
-    /// voice_command = "livekit-cli join-room --url {url} --api-key '' --token {token} --publish-microphone"
+    /// voice_command = "fluxter-phone {url} {token} {key}"
     /// ```
     #[serde(default)]
     pub voice_command: String,

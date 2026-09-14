@@ -1990,6 +1990,14 @@ pub struct VoiceConnection {
     pub grant: Option<VoiceGrant>,
     /// Whether a media program was started for this connection.
     pub media_running: bool,
+    /// Whether that program has since exited on its own.
+    pub media_exited: bool,
+    /// The program's name, for the details view.
+    pub media_program: Option<String>,
+    /// Whether cameras and screen shares are being received and shown.
+    pub watching: bool,
+    /// Whether a screen of this machine is being shared.
+    pub sharing: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2012,6 +2020,10 @@ pub struct IncomingCall {
 #[derive(Debug)]
 pub struct VoiceView {
     pub selected: usize,
+    /// The connection details are being shown instead of the rows;
+    /// `Some(true)` when the token went to the system clipboard,
+    /// `Some(false)` when only to the cut buffer.
+    pub details: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2025,6 +2037,12 @@ pub enum VoiceAction {
     Deafen,
     Undeafen,
     Leave,
+    /// Receive and show cameras and screen shares.
+    Watch,
+    StopWatching,
+    /// Share a screen or a window of this machine.
+    Share,
+    StopSharing,
     CopyGrant,
 }
 
@@ -2040,7 +2058,11 @@ impl VoiceAction {
             Self::Deafen => "Deafen yourself",
             Self::Undeafen => "Undeafen yourself",
             Self::Leave => "Leave",
-            Self::CopyGrant => "Copy the connection details",
+            Self::Watch => "Watch video and screen shares",
+            Self::StopWatching => "Stop watching video",
+            Self::Share => "Share your screen",
+            Self::StopSharing => "Stop sharing your screen",
+            Self::CopyGrant => "Connection details",
         }
     }
 }
@@ -2258,6 +2280,8 @@ pub struct App {
     pub voice_menu: Option<VoiceView>,
     /// The voice channel this session is in, if any.
     pub voice: Option<VoiceConnection>,
+    /// The sound program of that connection, while it runs.
+    pub voice_media: Option<crate::media::voice::VoiceMedia>,
     /// Conversations ringing at the moment, by channel.
     pub incoming_calls: HashMap<String, IncomingCall>,
     /// A message to select once its channel's history is loaded:
@@ -2501,6 +2525,7 @@ impl App {
             discover_total: 0,
             voice_menu: None,
             voice: None,
+            voice_media: None,
             incoming_calls: HashMap::new(),
             pending_jump: None,
             pending_jump_pages: 0,
@@ -5771,20 +5796,28 @@ impl App {
         }
     }
 
+    /// Keep a voice state: a community's under its id, a call's under
+    /// the channel's id (a call has no community, and a state that
+    /// leaves a call names no channel, so it is taken out of every call).
     pub fn update_voice_state(&mut self, state: VoiceStateResponse) {
-        let Some(guild_id) = state.guild_id.clone() else {
+        let Some(bucket) = state.guild_id.clone().or_else(|| state.channel_id.clone()) else {
+            for (bucket, states) in &mut self.voice_states {
+                if !self.guilds.iter().any(|g| &g.id == bucket) {
+                    states.remove(&state.user_id);
+                }
+            }
             return;
         };
 
-        if let Some(member) = state.member.clone() {
+        if let (Some(guild_id), Some(member)) = (&state.guild_id, state.member.clone()) {
             self.merge_guild_member(guild_id.as_str(), member);
         }
 
-        let guild_states = self.voice_states.entry(guild_id).or_default();
+        let states = self.voice_states.entry(bucket).or_default();
         if state.channel_id.is_none() {
-            guild_states.remove(&state.user_id);
+            states.remove(&state.user_id);
         } else {
-            guild_states.insert(state.user_id.clone(), state);
+            states.insert(state.user_id.clone(), state);
         }
     }
 
@@ -8039,8 +8072,12 @@ impl App {
 
     // Alt+V: voice
     pub fn open_voice_menu(&mut self) {
+        // the details view, if it was open, is not what comes back
         self.close_overlays();
-        self.voice_menu = Some(VoiceView { selected: 0 });
+        self.voice_menu = Some(VoiceView {
+            selected: 0,
+            details: None,
+        });
     }
 
     pub fn dismiss_voice_menu(&mut self) {
@@ -9272,6 +9309,18 @@ impl App {
                 } else {
                     VoiceAction::Deafen
                 });
+                if connection.media_running && !connection.media_exited {
+                    out.push(if connection.watching {
+                        VoiceAction::StopWatching
+                    } else {
+                        VoiceAction::Watch
+                    });
+                    out.push(if connection.sharing {
+                        VoiceAction::StopSharing
+                    } else {
+                        VoiceAction::Share
+                    });
+                }
                 if connection.grant.is_some() {
                     out.push(VoiceAction::CopyGrant);
                 }
@@ -9327,11 +9376,16 @@ impl App {
             self_deaf: false,
             grant: None,
             media_running: false,
+            media_exited: false,
+            media_program: None,
+            watching: false,
+            sharing: false,
         });
     }
 
     pub fn clear_voice(&mut self) {
         self.voice = None;
+        self.stop_voice_media();
     }
 
     /// Take VOICE_SERVER_UPDATE: the grant for the connection.
@@ -9346,7 +9400,11 @@ impl App {
         // the grant says the scope outright — a community's channel has
         // a guild and a call has none — so it settles what the client
         // guessed when it asked to join
-        connection.guild_id = event.guild_id;
+        // a grant for a call names no guild; one for a channel does, and
+        // a known guild is not forgotten over an event that omits it
+        if event.guild_id.is_some() {
+            connection.guild_id = event.guild_id;
+        }
         connection.grant = Some(VoiceGrant {
             endpoint: event.endpoint,
             token: event.token,
@@ -9354,11 +9412,112 @@ impl App {
         });
         // a fresh grant means a fresh connection to carry
         connection.media_running = false;
+        connection.media_exited = false;
+        if let Some(media) = self.voice_media.take() {
+            media.stop();
+        }
     }
 
     pub fn set_voice_media_running(&mut self, running: bool) {
         if let Some(connection) = &mut self.voice {
             connection.media_running = running;
+        }
+    }
+
+    /// Keep the sound program that was just started.
+    pub fn set_voice_media(&mut self, media: crate::media::voice::VoiceMedia, program: String) {
+        if let Some(old) = self.voice_media.replace(media) {
+            old.stop();
+        }
+        self.set_voice_media_running(true);
+        if let Some(connection) = &mut self.voice {
+            connection.media_exited = false;
+            connection.media_program = Some(program);
+            connection.watching = false;
+            connection.sharing = false;
+        }
+    }
+
+    /// Start or stop sharing a screen, and tell the program. Returns the
+    /// new state, None when there is no connection.
+    pub fn toggle_voice_sharing(&mut self) -> Option<bool> {
+        let connection = self.voice.as_mut()?;
+        connection.sharing = !connection.sharing;
+        let sharing = connection.sharing;
+        if let Some(media) = &mut self.voice_media {
+            media.send(if sharing { "screen" } else { "noscreen" });
+        }
+        Some(sharing)
+    }
+
+    /// Start or stop receiving video, and tell the program. Returns the
+    /// new state, None when there is no connection.
+    pub fn toggle_voice_watching(&mut self) -> Option<bool> {
+        let connection = self.voice.as_mut()?;
+        connection.watching = !connection.watching;
+        let watching = connection.watching;
+        if let Some(media) = &mut self.voice_media {
+            media.send(if watching { "video" } else { "novideo" });
+        }
+        Some(watching)
+    }
+
+    /// The stream keys of everyone showing a screen in the channel the
+    /// reader is connected to, which is what the reader is watching when
+    /// watching at all: `{guild}:{channel}:{connection}` in a community,
+    /// `dm:{channel}:{connection}` in a call.
+    pub fn viewer_stream_keys(&self) -> Vec<String> {
+        let Some(connection) = self.voice.as_ref() else {
+            return Vec::new();
+        };
+        if !connection.watching {
+            return Vec::new();
+        }
+        let bucket = connection
+            .guild_id
+            .clone()
+            .unwrap_or_else(|| connection.channel_id.clone());
+        let Some(states) = self.voice_states.get(&bucket) else {
+            return Vec::new();
+        };
+        let mut keys: Vec<String> = states
+            .values()
+            .filter(|state| {
+                state.self_stream && state.channel_id.as_deref() == Some(&connection.channel_id)
+            })
+            .map(|state| match &connection.guild_id {
+                Some(guild) => format!("{guild}:{}:{}", connection.channel_id, state.connection_id),
+                None => format!("dm:{}:{}", connection.channel_id, state.connection_id),
+            })
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    /// Ask the sound program to leave, if one runs.
+    pub fn stop_voice_media(&mut self) {
+        if let Some(media) = self.voice_media.take() {
+            media.stop();
+        }
+        if let Some(connection) = &mut self.voice {
+            connection.media_running = false;
+        }
+    }
+
+    /// Notice a sound program that has exited on its own (from the tick).
+    /// The connection stays; the menu says the sound stopped rather than
+    /// starting the program again in a loop.
+    pub fn reap_voice_media(&mut self) {
+        let Some(media) = &mut self.voice_media else {
+            return;
+        };
+        let Some(status) = media.poll() else {
+            return;
+        };
+        crate::debug::log("voice", format!("program exited: {status}"));
+        self.voice_media = None;
+        if let Some(connection) = &mut self.voice {
+            connection.media_exited = true;
         }
     }
 
@@ -9374,14 +9533,18 @@ impl App {
     }
 
     pub fn set_voice_flags(&mut self, self_mute: bool, self_deaf: bool) {
-        if let Some(connection) = &mut self.voice {
-            connection.self_mute = self_mute;
-            // deafening implies not hearing, and the web client mutes
-            // with it, so the two move together in that direction
-            connection.self_deaf = self_deaf;
-            if self_deaf {
-                connection.self_mute = true;
-            }
+        let Some(connection) = &mut self.voice else {
+            return;
+        };
+        // deafening implies not hearing, and the web client mutes
+        // with it, so the two move together in that direction
+        connection.self_mute = self_mute || self_deaf;
+        connection.self_deaf = self_deaf;
+        let (mute, deaf) = (connection.self_mute, connection.self_deaf);
+        // the sound program hears of it down its control line
+        if let Some(media) = &mut self.voice_media {
+            media.send(if deaf { "deafen" } else { "undeafen" });
+            media.send(if mute { "mute" } else { "unmute" });
         }
     }
 

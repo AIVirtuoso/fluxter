@@ -541,8 +541,10 @@ and what is going on:
 | **Ring this conversation** | A one-to-one or a group is open |
 | **Answer the call** / **Turn the call down** | Something is ringing for you |
 | **Mute** / **Deafen** and their undos | You are in a call |
+| **Watch video and screen shares** / **Stop watching video** | A sound program is carrying the call |
+| **Share your screen** / **Stop sharing your screen** | A sound program is carrying the call |
+| **Connection details** | You are in a call and the grant has arrived |
 | **Leave** | You are in a call |
-| **Copy the connection details** | You are in a call and the grant has arrived |
 
 A conversation that is ringing says so beside its name in the list, and
 raises a notification like a mention. Turning a call down stops it
@@ -561,23 +563,96 @@ So voice follows the same division as the audio player and the
 notification sender, which is the rule the rest of this client is built
 on: **the client decides and a program on PATH does it.** fluxter joins,
 leaves, mutes, deafens, answers, rings and keeps the bookkeeping, and
-hands the URL and token to whatever `[media] voice_command` names.
+hands the URL and token to a program that carries the sound.
+
+That program is **fluxter-phone**, a small Go program in `phone/` that
+ships with the client's Nix package and is on the client's PATH there.
+It connects to the room with LiveKit's Go SDK, sends the microphone in
+and plays every other voice, and it does the sound itself in the same
+spirit: **ffmpeg** captures the microphone as Ogg Opus (from pulse, which
+PipeWire answers to, or alsa on a bare console) and **ffplay or mpv**
+plays each remote voice from a pipe. Those have to be on PATH; the
+package does not bundle them, so install ffmpeg (which brings ffplay) or
+mpv. `FLUXTER_PHONE_MIC` and `FLUXTER_PHONE_PLAYER` name a different
+program for either side (whitespace-separated, Ogg Opus on the
+microphone's standard output and on the player's standard input).
+
+**Video and screen shares** are not received until asked for, since a
+camera nobody watches costs bandwidth for nothing. **Watch video and
+screen shares** in the voice menu subscribes to every camera and screen
+in the call, and fluxter-phone opens each in a window of its own through
+**ffplay** or **mpv**, titled after who is showing what; the server is
+told which streams are being watched, so the person sharing sees a
+viewer. **Stop watching video** closes the windows and unsubscribes.
+`FLUXTER_PHONE_VIDEO_PLAYER` names another program (`{title}` is the
+window title, `{format}` is `ivf` for VP8, VP9 and AV1 or `h264`, and the
+stream arrives on standard input). That needs a display: on a bare
+console there is no window to open, and nothing has been tried there
+yet. On an end-to-end encrypted channel only H.264 video can be
+decrypted here; an encrypted VP8 camera is reported and skipped.
+
+**Share your screen** goes through the desktop portal, the same door a
+browser uses: fluxter-phone asks `org.freedesktop.portal.ScreenCast` for
+a screen or a window, the portal's own chooser comes up (on wlroots
+compositors that is xdg-desktop-portal-wlr with whatever it is
+configured to run, slurp and fuzzel say), and the PipeWire stream it
+hands back is encoded by **GStreamer** (`pipewiresrc` into `x264enc`,
+baseline H.264 at low delay) and published as the screen share source.
+The voice state says `self_stream`, so others see the stream. The Nix
+package bundles GStreamer with the PipeWire source and the x264
+encoder for this; `FLUXTER_PHONE_SCREEN` names another capture command
+(`{fd}` is the portal's PipeWire connection, `{node}` the stream's node,
+raw H.264 expected on standard output). In a community the STREAM
+permission is needed, or the server clears the flag. Dismissing the
+chooser leaves the call as it was; the debug log says so. The room
+never sends your own track back, so while you share **and** watch video
+a window titled `your screen` shows what is going out, and closes when
+either stops.
+
+    fluxter-phone screen-test 5 /tmp/screen.h264
+
+tries the whole capture outside a call, five seconds into a file that
+`ffplay -f h264 /tmp/screen.h264` plays back.
+
+**Connection details** copies the media server's URL and the token to
+the clipboard (or the cut buffer, where there is no clipboard) and shows
+what can be shown on screen: the server, whether the channel is
+end-to-end encrypted, the sound program and whether it is running,
+whether video is being watched, and the connection's id. The token
+itself is never drawn.
+
+An end-to-end encrypted channel works too: the key the server issues
+goes to fluxter-phone as its third argument, and the frames are
+encrypted and decrypted the way the web client does it. The session
+identifies as capable of that whenever a sound program will run, since
+such a channel admits nothing else.
+
+Outside Nix, `cd phone && go build -o fluxter-phone` produces it; put it on
+PATH, or name it in the config. Another program can take its place:
 
 ```toml
 [media]
-voice_command = "livekit-cli join-room --url {url} --api-key '' --token {token} --publish-microphone"
+voice_command = "my-phone {url} {token} {key}"
 ```
 
 Three placeholders are filled in: `{url}`, `{token}`, and `{key}` for the
-end-to-end key where the channel has one. **The command is split into
-arguments before the values go in**, so nothing the server sends can add
-an argument of its own however it is punctuated.
+end-to-end key where the channel has one (empty otherwise). **The command
+is split into arguments before the values go in**, so nothing the server
+sends can add an argument of its own however it is punctuated. The
+program is told `mute`, `unmute`, `deafen`, `undeafen`, `video`,
+`novideo`, `screen` and `noscreen` on its standard input, one per line, and is asked to leave by
+that input being closed
+(it is killed a second later if it has not gone). Whatever it prints on
+its standard output goes to the debug log a line at a time, so it must
+never print the token; its standard error is dropped.
 
-**With no `voice_command` set you still join** — you appear in the
-channel, others see you there, and you can mute and leave — but no sound
-goes either way. That is a real state rather than a failure, so the menu
-says `no sound is being carried` in red and names the setting, and the
-status bar shows the call either way.
+**With no program at all you still join** — you appear in the channel,
+others see you there, and you can mute and leave — but no sound goes
+either way. That is a real state rather than a failure, so the menu says
+`no sound is being carried` in red and names what to install or set, and
+the status bar shows the call either way. A program that exits on its own
+is noticed within a tick; the menu then says `the sound program stopped`
+and the debug log has what it printed.
 
 The grant is a credential. The debug log records its shape and never its
 content, and **Copy the connection details** says so when it puts it on
@@ -1831,9 +1906,11 @@ instead of a display, which is how the console renderer is tested.
 
 ## Known issues & TODOs
 
-- **Voice** is view-only: the client shows who is in a voice channel but
-  cannot join, transmit or hear. Fluxer's voice runs over WebRTC through
-  LiveKit, which would mean a whole WebRTC stack in the client.
+- **Voice** carries sound and video only through fluxter-phone (or
+  another program named in `voice_command`): the client itself never
+  speaks WebRTC, and video opens in windows of its own rather than in the
+  terminal. A screen can be shared through the desktop portal; nothing
+  publishes a camera from here.
 - Some communities answer the member list request with a gateway
   timeout (504) from the server's own member service. The client keeps
   the pages that arrived, says in plain words that the list is

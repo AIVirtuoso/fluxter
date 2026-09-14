@@ -28,10 +28,11 @@
 
         # chafa is the text-art fallback when the terminal answers no
         # graphics-protocol query; sixel/kitty/iTerm2 rendering is built in.
-        # wl-clipboard/xclip are looked up on PATH at runtime for Ctrl+V, so
-        # whatever the desktop already has gets used.
+        # fluxter-phone carries a voice call's sound (see phone/). ffmpeg,
+        # ffplay, mpv, wl-clipboard and xclip are looked up on PATH at
+        # runtime, so whatever the desktop already has gets used.
         postInstall = ''
-          wrapProgram $out/bin/fluxter --suffix PATH : ${pkgs.lib.makeBinPath [pkgs.chafa]}
+          wrapProgram $out/bin/fluxter --suffix PATH : ${pkgs.lib.makeBinPath [pkgs.chafa phone]}
         '';
 
         meta = {
@@ -39,6 +40,34 @@
           homepage = "https://github.com/AIVirtuoso/fluxter";
           license = pkgs.lib.licenses.gpl3Plus;
           mainProgram = "fluxter";
+        };
+      };
+      # the sound of a voice call, handed the LiveKit grant by the client;
+      # a Go program because LiveKit's Go SDK is pure Go (pion), with no
+      # libwebrtc and no C++ in the build
+      phone = pkgs.buildGoModule {
+        pname = "fluxter-phone";
+        version = cargoToml.package.version;
+        src = ./phone;
+        vendorHash = "sha256-iNa8rFksHlxRe2QihkaSW3XmwOlYaKXcyhah+y59wOQ=";
+        env.CGO_ENABLED = 0;
+        nativeBuildInputs = [pkgs.makeWrapper];
+        # go names the binary after the directory. Sharing a screen encodes
+        # the portal's PipeWire stream with GStreamer: its launcher, the
+        # PipeWire source and the x264 encoder ride along, since nothing
+        # else on a system is likely to have exactly those.
+        postInstall = let
+          gstPlugins = with pkgs; [gst_all_1.gstreamer gst_all_1.gst-plugins-base gst_all_1.gst-plugins-ugly pipewire];
+        in ''
+          mv $out/bin/phone $out/bin/fluxter-phone
+          wrapProgram $out/bin/fluxter-phone \
+            --suffix PATH : ${pkgs.lib.makeBinPath [pkgs.gst_all_1.gstreamer]} \
+            --suffix GST_PLUGIN_SYSTEM_PATH_1_0 : ${pkgs.lib.makeSearchPathOutput "out" "lib/gstreamer-1.0" gstPlugins}
+        '';
+        meta = {
+          description = "Carries the sound of a Fluxer voice call for fluxter";
+          license = pkgs.lib.licenses.gpl3Plus;
+          mainProgram = "fluxter-phone";
         };
       };
       default = fluxer-tui;
@@ -65,7 +94,7 @@
             cp -r --no-preserve=mode,timestamps ${self}/. "$snap"/
             touch "$snap/.complete"
           fi
-          export PATH="${pkgs.lib.makeBinPath [pkgs.cargo pkgs.rustc pkgs.chafa]}:$PATH"
+          export PATH="${pkgs.lib.makeBinPath [pkgs.cargo pkgs.rustc pkgs.chafa self.packages.${pkgs.system}.phone]}:$PATH"
           exec cargo run --release --locked --manifest-path "$snap/Cargo.toml" -- "$@"
         '');
       };
@@ -73,7 +102,7 @@
 
     devShells = forAllSystems (pkgs: {
       default = pkgs.mkShell {
-        packages = with pkgs; [cargo rustc rustfmt clippy chafa wl-clipboard];
+        packages = with pkgs; [cargo rustc rustfmt clippy chafa wl-clipboard go];
       };
     });
   };
