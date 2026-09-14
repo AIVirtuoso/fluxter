@@ -62,25 +62,31 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(connection) = app.voice.as_ref() {
         // two short lines rather than one long one: the popup is narrow
         // and this is the sentence a reader most needs to finish
-        let (state, hint, style) = if connection.grant.is_none() {
-            ("waiting for the connection details", None, muted)
+        let (state, hints, style): (&str, &[&str], _) = if connection.grant.is_none() {
+            ("waiting for the connection details", &[], muted)
+        } else if connection.media_exited {
+            (
+                "the sound program stopped",
+                &["see the debug log, then", "leave and join again"],
+                danger,
+            )
         } else if !connection.media_running {
             (
                 "no sound is being carried",
-                Some("set [media] voice_command"),
+                &["install fluxter-phone", "or set [media] voice_command"],
                 danger,
             )
         } else {
-            ("sound is being carried", None, muted)
+            ("sound is being carried", &[], muted)
         };
         lines.push(Line::from(vec![
             Span::styled("  ", text),
             Span::styled(state, style),
         ]));
-        if let Some(hint) = hint {
+        for hint in hints {
             lines.push(Line::from(vec![
                 Span::styled("  ", text),
-                Span::styled(hint, muted),
+                Span::styled(*hint, muted),
             ]));
         }
         let members = app.voice_members_for_active_channel();

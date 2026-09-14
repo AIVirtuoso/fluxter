@@ -291,10 +291,17 @@ async fn main() -> Result<()> {
 
     let gateway_url = format!("{}/?v=1&encoding=json", gateway_url.trim_end_matches('/'));
 
+    // a voice channel that is end-to-end encrypted admits only a session
+    // that said it can handle the key; the sound program does, so the
+    // session says so whenever one will run
+    let identify = crate::api::gateway::IdentifyOptions {
+        initial_guild_id,
+        e2ee_capable: crate::media::voice::resolve_template(&config.media.voice_command).is_some(),
+    };
     tokio::spawn(run_gateway(
         gateway_url,
         auth.token.clone(),
-        initial_guild_id,
+        identify,
         gateway_cmd_rx,
         event_tx.clone(),
     ));
@@ -748,6 +755,7 @@ async fn main() -> Result<()> {
                 last_tick = now;
                 next_tick = tokio::time::Instant::now() + app.tick_period();
                 app.reap_audio();
+                app.reap_voice_media();
                 if let Some(summary) = frame_stats.summary_if_due() {
                     debug::log("draw", summary);
                 }
@@ -4420,20 +4428,22 @@ fn start_voice_media(app: &mut App, config: &AppConfig) {
     let Some((channel_id, grant)) = app.voice_grant_to_start() else {
         return;
     };
-    let template = config.media.voice_command.trim();
-    if template.is_empty() {
-        debug::log("voice", "no [media] voice_command, so no sound");
+    let Some(template) = crate::media::voice::resolve_template(&config.media.voice_command) else {
+        debug::log(
+            "voice",
+            "no [media] voice_command and no fluxter-phone on PATH, so no sound",
+        );
         app.set_status(
-            "In the channel. Set [media] voice_command to carry the sound (see the README).",
+            "In the channel. No sound: install fluxter-phone or set [media] voice_command (see the README).",
         );
         return;
-    }
+    };
     let parts = crate::media::voice::GrantParts {
         url: &grant.endpoint,
         token: &grant.token,
         key: grant.e2ee_key.as_deref(),
     };
-    let Some(argv) = crate::media::voice::build_command(template, &parts) else {
+    let Some(argv) = crate::media::voice::build_command(&template, &parts) else {
         app.set_status("[media] voice_command is empty after the placeholders.");
         return;
     };
@@ -4443,9 +4453,9 @@ fn start_voice_media(app: &mut App, config: &AppConfig) {
         "voice",
         format!("starting {} with {} arguments", argv[0], argv.len() - 1),
     );
-    match crate::media::voice::spawn(&argv) {
-        Ok(_) => {
-            app.set_voice_media_running(true);
+    match crate::media::voice::VoiceMedia::start(&argv) {
+        Ok(media) => {
+            app.set_voice_media(media);
             let (_, name) = app.channel_location(&channel_id);
             app.set_status(format!("In {name}."));
         }

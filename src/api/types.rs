@@ -1399,6 +1399,9 @@ pub struct GatewayIdentifyProperties {
     pub os: String,
     pub browser: String,
     pub device: String,
+    /// Whether this session can handle an end-to-end encrypted voice
+    /// channel's key; without it the server refuses such a channel.
+    pub e2ee_capable: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

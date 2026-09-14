@@ -1990,6 +1990,8 @@ pub struct VoiceConnection {
     pub grant: Option<VoiceGrant>,
     /// Whether a media program was started for this connection.
     pub media_running: bool,
+    /// Whether that program has since exited on its own.
+    pub media_exited: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2258,6 +2260,8 @@ pub struct App {
     pub voice_menu: Option<VoiceView>,
     /// The voice channel this session is in, if any.
     pub voice: Option<VoiceConnection>,
+    /// The sound program of that connection, while it runs.
+    pub voice_media: Option<crate::media::voice::VoiceMedia>,
     /// Conversations ringing at the moment, by channel.
     pub incoming_calls: HashMap<String, IncomingCall>,
     /// A message to select once its channel's history is loaded:
@@ -2501,6 +2505,7 @@ impl App {
             discover_total: 0,
             voice_menu: None,
             voice: None,
+            voice_media: None,
             incoming_calls: HashMap::new(),
             pending_jump: None,
             pending_jump_pages: 0,
@@ -9327,11 +9332,13 @@ impl App {
             self_deaf: false,
             grant: None,
             media_running: false,
+            media_exited: false,
         });
     }
 
     pub fn clear_voice(&mut self) {
         self.voice = None;
+        self.stop_voice_media();
     }
 
     /// Take VOICE_SERVER_UPDATE: the grant for the connection.
@@ -9354,11 +9361,53 @@ impl App {
         });
         // a fresh grant means a fresh connection to carry
         connection.media_running = false;
+        connection.media_exited = false;
+        if let Some(media) = self.voice_media.take() {
+            media.stop();
+        }
     }
 
     pub fn set_voice_media_running(&mut self, running: bool) {
         if let Some(connection) = &mut self.voice {
             connection.media_running = running;
+        }
+    }
+
+    /// Keep the sound program that was just started.
+    pub fn set_voice_media(&mut self, media: crate::media::voice::VoiceMedia) {
+        if let Some(old) = self.voice_media.replace(media) {
+            old.stop();
+        }
+        self.set_voice_media_running(true);
+        if let Some(connection) = &mut self.voice {
+            connection.media_exited = false;
+        }
+    }
+
+    /// Ask the sound program to leave, if one runs.
+    pub fn stop_voice_media(&mut self) {
+        if let Some(media) = self.voice_media.take() {
+            media.stop();
+        }
+        if let Some(connection) = &mut self.voice {
+            connection.media_running = false;
+        }
+    }
+
+    /// Notice a sound program that has exited on its own (from the tick).
+    /// The connection stays; the menu says the sound stopped rather than
+    /// starting the program again in a loop.
+    pub fn reap_voice_media(&mut self) {
+        let Some(media) = &mut self.voice_media else {
+            return;
+        };
+        let Some(status) = media.poll() else {
+            return;
+        };
+        crate::debug::log("voice", format!("program exited: {status}"));
+        self.voice_media = None;
+        if let Some(connection) = &mut self.voice {
+            connection.media_exited = true;
         }
     }
 
@@ -9374,14 +9423,18 @@ impl App {
     }
 
     pub fn set_voice_flags(&mut self, self_mute: bool, self_deaf: bool) {
-        if let Some(connection) = &mut self.voice {
-            connection.self_mute = self_mute;
-            // deafening implies not hearing, and the web client mutes
-            // with it, so the two move together in that direction
-            connection.self_deaf = self_deaf;
-            if self_deaf {
-                connection.self_mute = true;
-            }
+        let Some(connection) = &mut self.voice else {
+            return;
+        };
+        // deafening implies not hearing, and the web client mutes
+        // with it, so the two move together in that direction
+        connection.self_mute = self_mute || self_deaf;
+        connection.self_deaf = self_deaf;
+        let (mute, deaf) = (connection.self_mute, connection.self_deaf);
+        // the sound program hears of it down its control line
+        if let Some(media) = &mut self.voice_media {
+            media.send(if deaf { "deafen" } else { "undeafen" });
+            media.send(if mute { "mute" } else { "unmute" });
         }
     }
 

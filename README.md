@@ -561,23 +561,51 @@ So voice follows the same division as the audio player and the
 notification sender, which is the rule the rest of this client is built
 on: **the client decides and a program on PATH does it.** fluxter joins,
 leaves, mutes, deafens, answers, rings and keeps the bookkeeping, and
-hands the URL and token to whatever `[media] voice_command` names.
+hands the URL and token to a program that carries the sound.
+
+That program is **fluxter-phone**, a small Go program in `phone/` that
+ships with the client's Nix package and is on the client's PATH there.
+It connects to the room with LiveKit's Go SDK, sends the microphone in
+and plays every other voice, and it does the sound itself in the same
+spirit: **ffmpeg** captures the microphone as Ogg Opus (from pulse, which
+PipeWire answers to, or alsa on a bare console) and **ffplay or mpv**
+plays each remote voice from a pipe. Those have to be on PATH; the
+package does not bundle them, so install ffmpeg (which brings ffplay) or
+mpv. `FLUXTER_PHONE_MIC` and `FLUXTER_PHONE_PLAYER` name a different
+program for either side (whitespace-separated, Ogg Opus on the
+microphone's standard output and on the player's standard input).
+
+An end-to-end encrypted channel works too: the key the server issues
+goes to fluxter-phone as its third argument, and the frames are
+encrypted and decrypted the way the web client does it. The session
+identifies as capable of that whenever a sound program will run, since
+such a channel admits nothing else.
+
+Outside Nix, `cd phone && go build -o fluxter-phone` produces it; put it on
+PATH, or name it in the config. Another program can take its place:
 
 ```toml
 [media]
-voice_command = "livekit-cli join-room --url {url} --api-key '' --token {token} --publish-microphone"
+voice_command = "my-phone {url} {token} {key}"
 ```
 
 Three placeholders are filled in: `{url}`, `{token}`, and `{key}` for the
-end-to-end key where the channel has one. **The command is split into
-arguments before the values go in**, so nothing the server sends can add
-an argument of its own however it is punctuated.
+end-to-end key where the channel has one (empty otherwise). **The command
+is split into arguments before the values go in**, so nothing the server
+sends can add an argument of its own however it is punctuated. The
+program is told `mute`, `unmute`, `deafen` and `undeafen` on its standard
+input, one per line, and is asked to leave by that input being closed
+(it is killed a second later if it has not gone). Whatever it prints on
+its standard output goes to the debug log a line at a time, so it must
+never print the token; its standard error is dropped.
 
-**With no `voice_command` set you still join** — you appear in the
-channel, others see you there, and you can mute and leave — but no sound
-goes either way. That is a real state rather than a failure, so the menu
-says `no sound is being carried` in red and names the setting, and the
-status bar shows the call either way.
+**With no program at all you still join** — you appear in the channel,
+others see you there, and you can mute and leave — but no sound goes
+either way. That is a real state rather than a failure, so the menu says
+`no sound is being carried` in red and names what to install or set, and
+the status bar shows the call either way. A program that exits on its own
+is noticed within a tick; the menu then says `the sound program stopped`
+and the debug log has what it printed.
 
 The grant is a credential. The debug log records its shape and never its
 content, and **Copy the connection details** says so when it puts it on
@@ -1831,9 +1859,9 @@ instead of a display, which is how the console renderer is tested.
 
 ## Known issues & TODOs
 
-- **Voice** is view-only: the client shows who is in a voice channel but
-  cannot join, transmit or hear. Fluxer's voice runs over WebRTC through
-  LiveKit, which would mean a whole WebRTC stack in the client.
+- **Voice** carries sound only through fluxter-phone (or another program
+  named in `voice_command`): the client itself never speaks WebRTC. Camera
+  and screen share are not shown; fluxter-phone unsubscribes from them.
 - Some communities answer the member list request with a gateway
   timeout (504) from the server's own member service. The client keeps
   the pages that arrived, says in plain words that the list is
