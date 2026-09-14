@@ -49,7 +49,7 @@
         pname = "fluxter-phone";
         version = cargoToml.package.version;
         src = ./phone;
-        vendorHash = "sha256-Av5fKqTACt3YNT4iq8jO21OC8F3x6UYz+VFfFQOZpqs=";
+        vendorHash = "sha256-8mkMF5Jw0Z7jIYc+AmzKmiwaTKrek3wxPIE0eS1BqNs=";
         env.CGO_ENABLED = 0;
         # go names the binary after the directory
         postInstall = "mv $out/bin/phone $out/bin/fluxter-phone";

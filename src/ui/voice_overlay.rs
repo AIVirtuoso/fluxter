@@ -58,8 +58,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // where the sound stands, before the things that can be done
-    if let Some(connection) = app.voice.as_ref() {
+    // where the sound stands, before the things that can be done (the
+    // details view has that in its own rows)
+    if view.details.is_none()
+        && let Some(connection) = app.voice.as_ref()
+    {
         // two short lines rather than one long one: the popup is narrow
         // and this is the sentence a reader most needs to finish
         let (state, hints, style): (&str, &[&str], _) = if connection.grant.is_none() {
@@ -97,6 +100,75 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             ]));
         }
         lines.push(Line::from(""));
+    }
+
+    // the details view: what can be shown of the connection
+    if let (Some(copied), Some(connection)) = (view.details, app.voice.as_ref()) {
+        let endpoint = connection
+            .grant
+            .as_ref()
+            .map(|g| g.endpoint.clone())
+            .unwrap_or_else(|| "not yet issued".to_string());
+        let encrypted = connection
+            .grant
+            .as_ref()
+            .is_some_and(|g| g.e2ee_key.is_some());
+        let program = match (&connection.media_program, connection.media_exited) {
+            (Some(name), true) => format!("{name} (stopped)"),
+            (Some(name), false) => format!("{name} (running)"),
+            (None, _) => "none".to_string(),
+        };
+        let rows: [(&str, String); 5] = [
+            ("Media server", endpoint),
+            (
+                "End-to-end encrypted",
+                if encrypted { "yes" } else { "no" }.to_string(),
+            ),
+            ("Sound program", program),
+            (
+                "Watching video",
+                if connection.watching { "yes" } else { "no" }.to_string(),
+            ),
+            (
+                "Connection",
+                connection
+                    .connection_id
+                    .clone()
+                    .unwrap_or_else(|| "not yet acknowledged".to_string()),
+            ),
+        ];
+        for (label, value) in rows {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {label}: "), muted),
+                Span::styled(value, text),
+            ]));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            if copied {
+                "  The URL and the token went to the clipboard. The token is a"
+            } else {
+                "  The URL and the token went to the cut buffer (Alt+V pastes). The token is a"
+            },
+            muted,
+        )));
+        lines.push(Line::from(Span::styled(
+            "  credential: it is not shown here, and does not belong in a bug report.",
+            muted,
+        )));
+        let block = Block::default()
+            .title(Line::from(Span::styled(title, accent)))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(crate::ui::theme::accent_dim()));
+        frame.render_widget(
+            Paragraph::new(Text::from(lines))
+                .block(block)
+                .alignment(Alignment::Left)
+                .wrap(ratatui::widgets::Wrap { trim: false }),
+            content,
+        );
+        crate::ui::footer::render(frame, body[1], app, "Esc back");
+        return;
     }
 
     let actions = app.voice_actions();
@@ -252,6 +324,70 @@ mod tests {
         assert!(s.contains("voice_command"), "{s}");
         app.set_voice_media_running(true);
         assert!(drawn(&app, 70, 16).contains("sound is being carried"));
+    }
+
+    #[test]
+    fn watching_video_is_offered_once_a_program_carries_the_sound() {
+        let mut app = app();
+        app.selected_server = ServerSelection::Guild("g1".to_string());
+        app.selected_channel_id = Some("vc1".to_string());
+        app.set_voice_joining("vc1".to_string(), Some("g1".to_string()));
+        app.set_voice_grant(VoiceServerUpdateEvent {
+            token: "t".to_string(),
+            endpoint: "wss://x".to_string(),
+            connection_id: "c1".to_string(),
+            channel_id: "vc1".to_string(),
+            ..Default::default()
+        });
+        app.open_voice_menu();
+        assert!(!drawn(&app, 70, 18).contains("Watch video"));
+        app.set_voice_media_running(true);
+        assert!(drawn(&app, 70, 18).contains("Watch video and screen shares"));
+        assert_eq!(app.toggle_voice_watching(), Some(true));
+        assert!(drawn(&app, 70, 18).contains("Stop watching video"));
+        // the streams being watched are named by key for the server
+        app.update_voice_state(crate::api::types::VoiceStateResponse {
+            guild_id: Some("g1".to_string()),
+            channel_id: Some("vc1".to_string()),
+            user_id: "bob".to_string(),
+            connection_id: "conn-bob".to_string(),
+            self_stream: true,
+            ..Default::default()
+        });
+        app.update_voice_state(crate::api::types::VoiceStateResponse {
+            guild_id: Some("g1".to_string()),
+            channel_id: Some("vc1".to_string()),
+            user_id: "ann".to_string(),
+            connection_id: "conn-ann".to_string(),
+            ..Default::default()
+        });
+        assert_eq!(
+            app.viewer_stream_keys(),
+            vec!["g1:vc1:conn-bob".to_string()]
+        );
+        assert_eq!(app.toggle_voice_watching(), Some(false));
+        assert!(app.viewer_stream_keys().is_empty());
+    }
+
+    #[test]
+    fn the_details_view_names_the_server_and_never_the_token() {
+        let mut app = app();
+        app.selected_server = ServerSelection::Guild("g1".to_string());
+        app.selected_channel_id = Some("vc1".to_string());
+        app.set_voice_joining("vc1".to_string(), Some("g1".to_string()));
+        app.set_voice_grant(VoiceServerUpdateEvent {
+            token: "eyJ.secret.token".to_string(),
+            endpoint: "wss://voice.example/rtc".to_string(),
+            connection_id: "c1".to_string(),
+            channel_id: "vc1".to_string(),
+            ..Default::default()
+        });
+        app.open_voice_menu();
+        app.voice_menu.as_mut().expect("a menu").details = Some(true);
+        let s = drawn(&app, 90, 20);
+        assert!(s.contains("wss://voice.example/rtc"), "{s}");
+        assert!(s.contains("clipboard"), "{s}");
+        assert!(!s.contains("secret"), "{s}");
     }
 
     #[test]

@@ -2846,6 +2846,19 @@ fn handle_key_event(
     }
 
     if app.voice_menu.is_some() {
+        // the details view goes back to the rows on any of the keys
+        // that would otherwise close or act
+        if let Some(view) = app.voice_menu.as_mut()
+            && view.details.is_some()
+        {
+            if matches!(
+                key.code,
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::Backspace
+            ) {
+                view.details = None;
+            }
+            return;
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => app.dismiss_voice_menu(),
             KeyCode::Up | KeyCode::Char('k') => app.voice_menu_move(-1),
@@ -4455,7 +4468,7 @@ fn start_voice_media(app: &mut App, config: &AppConfig) {
     );
     match crate::media::voice::VoiceMedia::start(&argv) {
         Ok(media) => {
-            app.set_voice_media(media);
+            app.set_voice_media(media, argv[0].clone());
             let (_, name) = app.channel_location(&channel_id);
             app.set_status(format!("In {name}."));
         }
@@ -4537,6 +4550,18 @@ fn run_voice_action(
             app.set_status(if deaf { "Deafened." } else { "Undeafened." });
             resend_voice_state(app, gateway_cmd_tx);
         }
+        crate::app::VoiceAction::Watch | crate::app::VoiceAction::StopWatching => {
+            let Some(watching) = app.toggle_voice_watching() else {
+                return;
+            };
+            app.set_status(if watching {
+                "Watching: each camera and screen share opens in a window of its own."
+            } else {
+                "No longer watching video."
+            });
+            // the server counts viewers of a stream by the keys we send
+            resend_voice_state(app, gateway_cmd_tx);
+        }
         crate::app::VoiceAction::CopyGrant => {
             let Some(connection) = app.voice.clone() else {
                 return;
@@ -4548,12 +4573,11 @@ fn run_voice_action(
             // the reader knows what they are pasting
             let text = format!("url={}\ntoken={}", grant.endpoint, grant.token);
             let clipboard = app.copy_text_out(text);
-            app.dismiss_voice_menu();
-            app.set_status(if clipboard {
-                "Copied the connection details. They are a credential; do not paste them into a bug report."
-            } else {
-                "Copied to the cut buffer (Alt+V pastes). They are a credential."
-            });
+            // the menu stays and shows what can be shown; the token is
+            // on the clipboard, not on the screen
+            if let Some(view) = app.voice_menu.as_mut() {
+                view.details = Some(clipboard);
+            }
         }
         crate::app::VoiceAction::Leave => {
             let guild_id = app.voice.as_ref().and_then(|c| c.guild_id.clone());
@@ -5306,6 +5330,7 @@ fn send_voice_state(
         connection_id,
         self_mute,
         self_deaf,
+        viewer_stream_keys: app.viewer_stream_keys(),
     });
 }
 

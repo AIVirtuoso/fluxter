@@ -541,8 +541,9 @@ and what is going on:
 | **Ring this conversation** | A one-to-one or a group is open |
 | **Answer the call** / **Turn the call down** | Something is ringing for you |
 | **Mute** / **Deafen** and their undos | You are in a call |
+| **Watch video and screen shares** / **Stop watching video** | A sound program is carrying the call |
+| **Connection details** | You are in a call and the grant has arrived |
 | **Leave** | You are in a call |
-| **Copy the connection details** | You are in a call and the grant has arrived |
 
 A conversation that is ringing says so beside its name in the list, and
 raises a notification like a mention. Turning a call down stops it
@@ -575,6 +576,27 @@ mpv. `FLUXTER_PHONE_MIC` and `FLUXTER_PHONE_PLAYER` name a different
 program for either side (whitespace-separated, Ogg Opus on the
 microphone's standard output and on the player's standard input).
 
+**Video and screen shares** are not received until asked for, since a
+camera nobody watches costs bandwidth for nothing. **Watch video and
+screen shares** in the voice menu subscribes to every camera and screen
+in the call, and fluxter-phone opens each in a window of its own through
+**ffplay** or **mpv**, titled after who is showing what; the server is
+told which streams are being watched, so the person sharing sees a
+viewer. **Stop watching video** closes the windows and unsubscribes.
+`FLUXTER_PHONE_VIDEO_PLAYER` names another program (`{title}` is the
+window title, `{format}` is `ivf` for VP8, VP9 and AV1 or `h264`, and the
+stream arrives on standard input). That needs a display: on a bare
+console there is no window to open, and nothing has been tried there
+yet. On an end-to-end encrypted channel only H.264 video can be
+decrypted here; an encrypted VP8 camera is reported and skipped.
+
+**Connection details** copies the media server's URL and the token to
+the clipboard (or the cut buffer, where there is no clipboard) and shows
+what can be shown on screen: the server, whether the channel is
+end-to-end encrypted, the sound program and whether it is running,
+whether video is being watched, and the connection's id. The token
+itself is never drawn.
+
 An end-to-end encrypted channel works too: the key the server issues
 goes to fluxter-phone as its third argument, and the frames are
 encrypted and decrypted the way the web client does it. The session
@@ -593,8 +615,9 @@ Three placeholders are filled in: `{url}`, `{token}`, and `{key}` for the
 end-to-end key where the channel has one (empty otherwise). **The command
 is split into arguments before the values go in**, so nothing the server
 sends can add an argument of its own however it is punctuated. The
-program is told `mute`, `unmute`, `deafen` and `undeafen` on its standard
-input, one per line, and is asked to leave by that input being closed
+program is told `mute`, `unmute`, `deafen`, `undeafen`, `video` and
+`novideo` on its standard input, one per line, and is asked to leave by
+that input being closed
 (it is killed a second later if it has not gone). Whatever it prints on
 its standard output goes to the debug log a line at a time, so it must
 never print the token; its standard error is dropped.
@@ -1859,9 +1882,10 @@ instead of a display, which is how the console renderer is tested.
 
 ## Known issues & TODOs
 
-- **Voice** carries sound only through fluxter-phone (or another program
-  named in `voice_command`): the client itself never speaks WebRTC. Camera
-  and screen share are not shown; fluxter-phone unsubscribes from them.
+- **Voice** carries sound and video only through fluxter-phone (or
+  another program named in `voice_command`): the client itself never
+  speaks WebRTC, and video opens in windows of its own rather than in the
+  terminal. Nothing publishes a camera or a screen from here.
 - Some communities answer the member list request with a gateway
   timeout (504) from the server's own member service. The client keeps
   the pages that arrived, says in plain words that the list is
