@@ -82,20 +82,29 @@ var defaultPlayers = [][]string{
 // Video players tried in turn, each reading a stream from standard
 // input: `{format}` is `ivf` for VP8, VP9 and AV1 and `h264` for H.264,
 // `{title}` names the window after who is showing what.
+// Probing is turned down to nothing: a live pipe has no history to read
+// ahead in, and a raw stream would otherwise wait for several seconds of
+// it before the first picture.
 var defaultVideoPlayers = [][]string{
-	{"ffplay", "-loglevel", "error", "-fflags", "nobuffer", "-flags", "low_delay",
+	{"ffplay", "-loglevel", "error", "-fflags", "nobuffer", "-flags", "low_delay", "-framedrop",
+		"-probesize", "32", "-analyzeduration", "0",
 		"-window_title", "{title}", "-f", "{format}", "-i", "pipe:0"},
 	{"mpv", "--no-terminal", "--really-quiet", "--profile=low-latency",
+		"--demuxer-lavf-probesize=32", "--demuxer-lavf-analyzeduration=0",
 		"--title={title}", "--demuxer-lavf-format={format}", "-"},
 }
 
 // The screen capture: the portal's PipeWire stream, given as file
 // descriptor `{fd}` and node `{node}`, encoded to raw H.264 on standard
-// output. Baseline at a low delay, a keyframe every second at most, so a
-// viewer who arrives late sees a picture soon.
+// output. The portal sends a frame only when the screen changes, so the
+// rate is made a steady 30 a second first (a still screen repeats its
+// last frame, which costs the encoder next to nothing); that keeps a
+// keyframe coming every second, so a viewer who arrives late, or the
+// preview, sees a picture within one. Baseline at a low delay.
 var defaultScreen = []string{
 	"gst-launch-1.0", "-q",
 	"pipewiresrc", "fd={fd}", "path={node}", "do-timestamp=true",
+	"!", "videorate", "!", "video/x-raw,framerate=30/1",
 	"!", "videoconvert", "!", "video/x-raw,format=I420",
 	"!", "x264enc", "tune=zerolatency", "speed-preset=ultrafast", "key-int-max=30", "bitrate=2500",
 	"!", "video/x-h264,stream-format=byte-stream,profile=baseline",
