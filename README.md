@@ -240,54 +240,79 @@ act on them.
 
 ## Build and run
 
+From a checkout, build both programs: `fluxter` is the client, and
+`fluxter-phone` carries the sound of voice calls (see "Voice").
+
 ```bash
-cargo build --release
-# binary: target/release/fluxter
+cargo build --release                  # the client: target/release/fluxter
+(cd phone && go build -o fluxter-phone .)   # voice calls: phone/fluxter-phone
 cargo run --release
-# the sound of a voice call
-cd phone && go build -o fluxter-phone .
 ```
 
-Put `phone/fluxter-phone` on PATH, or name it in `[media] voice_command`;
-without it a call is joined but nothing is heard or sent.
+fluxter looks for `fluxter-phone` on PATH. Copy `phone/fluxter-phone`
+into a directory that is on your PATH, or give its full path in the
+config:
+
+```toml
+[media]
+voice_command = "/full/path/to/fluxter-phone {url} {token} {key}"
+```
+
+Without it a call is joined, but nothing is heard or sent.
 
 ## Install with cargo
 
-The client installs straight from git. Name the package: the
-repository also holds `scripts/gen-emoji-aliases`, a small tool that
-generates the emoji alias table, and cargo asks which one to install
-otherwise.
+Installing with cargo means installing **two programs**, and cargo can
+only build the first one:
+
+1. **`fluxter`**, the client, written in Rust.
+2. **`fluxter-phone`**, which carries the sound of voice calls, written
+   in Go. Without it you can join a call but you hear nothing and send
+   nothing, and the voice menu says `no sound is being carried`.
+
+You need **Rust 1.85 or newer**, **Go 1.26 or newer** and **git**
+(`cargo --version` and `go version` say which you have). Then run all of
+this:
 
 ```bash
+# 1. the client: puts fluxter in ~/.cargo/bin
 cargo install --git https://github.com/AIVirtuoso/fluxter fluxer-tui
-# a branch: cargo install --git https://github.com/AIVirtuoso/fluxter --branch <branch> fluxer-tui
+
+# 2. voice calls: builds fluxter-phone into ~/.cargo/bin, next to fluxter
+cd "$(mktemp -d)"
+git clone --depth 1 https://github.com/AIVirtuoso/fluxter
+cd fluxter/phone
+go build -o ~/.cargo/bin/fluxter-phone .
 ```
 
-This puts `fluxter` in `~/.cargo/bin`. The crate uses edition 2024, so
-Rust 1.85 or newer is needed; the console-mode dependencies (drm, swash)
-are pure Rust, so no C libraries have to be installed. A few tools are
+Check that both are installed. This must print two lines, one for each
+program; if it prints only one, the step for the other did not work:
+
+```bash
+command -v fluxter fluxter-phone
+```
+
+For a call to carry sound, **also install `ffmpeg`** from your
+distribution's packages: it records the microphone, and its `ffplay`
+plays the others (`mpv` works for playing too). Sharing your screen
+needs GStreamer (`gst-launch-1.0`) with its PipeWire source and x264
+encoder, and a desktop portal; see "Voice".
+
+**To update**, run both steps again; if cargo says fluxter is already
+installed, add `--force` to the `cargo install` line. **To install a
+branch** instead of master, add `--branch <branch>` to both the
+`cargo install` line and the `git clone` line.
+
+The `fluxer-tui` at the end of the `cargo install` line names the
+package: the repository also holds `scripts/gen-emoji-aliases`, a small
+tool that generates the emoji alias table, and cargo asks which one to
+install otherwise. The console-mode dependencies (drm, swash) are pure
+Rust, so no C libraries have to be installed. A few more tools are
 looked up on PATH at runtime and are optional: `chafa` for text-art
 pictures on a terminal without a graphics protocol, `wl-copy` or `xclip`
 for pasting, and `fc-match` (fontconfig) only when running on a Linux
 virtual console, where the UI is drawn through DRM (see `[console]`
 below).
-
-**Voice calls need a second program that cargo cannot install.** The
-sound of a call is carried by `fluxter-phone`, which is written in Go
-(see "Voice"), so `cargo install` leaves it out and the voice menu says
-`no sound is being carried`. Build it with Go 1.26 or newer and put it
-next to `fluxter`:
-
-```bash
-git clone https://github.com/AIVirtuoso/fluxter
-cd fluxter/phone
-go build -o ~/.cargo/bin/fluxter-phone .
-```
-
-At run time it needs `ffmpeg` for the microphone and `ffplay` (part of
-ffmpeg) or `mpv` to play the others; sharing a screen needs GStreamer's
-`gst-launch-1.0` with the PipeWire source and the x264 encoder, and a
-desktop portal.
 
 ## Install with the PKGBUILD on Arch (or its derivatives)
 
