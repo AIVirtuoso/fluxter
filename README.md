@@ -232,6 +232,8 @@ act on them.
 ## Requirements
 
 - Rust toolchain
+- Go 1.26 or newer, only to build fluxter-phone, which carries the sound
+  of a voice call (see "Voice")
 - A terminal with reasonable size (the layout expects multiple panes);
   see "Terminals" for which ones have been tried and what they need
 - Network access for the API, gateway WebSocket, and browser login
@@ -242,7 +244,12 @@ act on them.
 cargo build --release
 # binary: target/release/fluxter
 cargo run --release
+# the sound of a voice call
+cd phone && go build -o fluxter-phone .
 ```
+
+Put `phone/fluxter-phone` on PATH, or name it in `[media] voice_command`;
+without it a call is joined but nothing is heard or sent.
 
 ## Install with cargo
 
@@ -265,6 +272,23 @@ for pasting, and `fc-match` (fontconfig) only when running on a Linux
 virtual console, where the UI is drawn through DRM (see `[console]`
 below).
 
+**Voice calls need a second program that cargo cannot install.** The
+sound of a call is carried by `fluxter-phone`, which is written in Go
+(see "Voice"), so `cargo install` leaves it out and the voice menu says
+`no sound is being carried`. Build it with Go 1.26 or newer and put it
+next to `fluxter`:
+
+```bash
+git clone https://github.com/AIVirtuoso/fluxter
+cd fluxter/phone
+go build -o ~/.cargo/bin/fluxter-phone .
+```
+
+At run time it needs `ffmpeg` for the microphone and `ffplay` (part of
+ffmpeg) or `mpv` to play the others; sharing a screen needs GStreamer's
+`gst-launch-1.0` with the PipeWire source and the x264 encoder, and a
+desktop portal.
+
 ## Install with the PKGBUILD on Arch (or its derivatives)
 
 This is good for those who use an Arch-based distro and want to manage their
@@ -281,6 +305,13 @@ A few tools are looked up on PATH at runtime and are optional:
 protocol, `wl-copy` or `xclip` for pasting, and `fc-match`
 (fontconfig) only when running on a Linux virtual console,
 where the UI is drawn through DRM (see `[console]` below).
+
+The package builds `fluxter-phone` too and installs it next to
+`fluxter`, so voice calls carry sound; that needs `go` at build time,
+which `makepkg -s` installs. Its optional dependencies are what a call
+uses at run time: `ffmpeg` for the microphone and playback (or `mpv` for
+playback), and `gst-plugins-ugly`, `gst-plugin-pipewire` and
+`xdg-desktop-portal` for sharing a screen.
 
 ## Trying a branch without a full rebuild
 
@@ -566,7 +597,8 @@ leaves, mutes, deafens, answers, rings and keeps the bookkeeping, and
 hands the URL and token to a program that carries the sound.
 
 That program is **fluxter-phone**, a small Go program in `phone/` that
-ships with the client's Nix package and is on the client's PATH there.
+ships with the client's Nix package (on the client's PATH there) and with
+the Arch PKGBUILD.
 It connects to the room with LiveKit's Go SDK, sends the microphone in
 and plays every other voice, and it does the sound itself in the same
 spirit: **ffmpeg** captures the microphone as Ogg Opus (from pulse, which
@@ -627,8 +659,10 @@ encrypted and decrypted the way the web client does it. The session
 identifies as capable of that whenever a sound program will run, since
 such a channel admits nothing else.
 
-Outside Nix, `cd phone && go build -o fluxter-phone` produces it; put it on
-PATH, or name it in the config. Another program can take its place:
+The Arch PKGBUILD builds and installs it as well. `cargo install`
+cannot, since it is not a Rust crate: "Install with cargo" says how to
+build it with Go and put it on PATH, or name it in the config. Another
+program can take its place:
 
 ```toml
 [media]
