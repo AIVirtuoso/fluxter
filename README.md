@@ -232,33 +232,82 @@ act on them.
 ## Requirements
 
 - Rust toolchain
+- Go 1.26 or newer, only to build fluxter-phone, which carries the sound
+  of a voice call (see "Voice")
 - A terminal with reasonable size (the layout expects multiple panes);
   see "Terminals" for which ones have been tried and what they need
 - Network access for the API, gateway WebSocket, and browser login
 
 ## Build and run
 
+From a checkout, build both programs: `fluxter` is the client, and
+`fluxter-phone` carries the sound of voice calls (see "Voice").
+
 ```bash
-cargo build --release
-# binary: target/release/fluxter
+cargo build --release                  # the client: target/release/fluxter
+(cd phone && go build -o fluxter-phone .)   # voice calls: phone/fluxter-phone
 cargo run --release
 ```
 
-## Install with cargo
+fluxter looks for `fluxter-phone` on PATH. Copy `phone/fluxter-phone`
+into a directory that is on your PATH, or give its full path in the
+config:
 
-The client installs straight from git. Name the package: the
-repository also holds `scripts/gen-emoji-aliases`, a small tool that
-generates the emoji alias table, and cargo asks which one to install
-otherwise.
-
-```bash
-cargo install --git https://github.com/AIVirtuoso/fluxter fluxer-tui
-# a branch: cargo install --git https://github.com/AIVirtuoso/fluxter --branch <branch> fluxer-tui
+```toml
+[media]
+voice_command = "/full/path/to/fluxter-phone {url} {token} {key}"
 ```
 
-This puts `fluxter` in `~/.cargo/bin`. The crate uses edition 2024, so
-Rust 1.85 or newer is needed; the console-mode dependencies (drm, swash)
-are pure Rust, so no C libraries have to be installed. A few tools are
+Without it a call is joined, but nothing is heard or sent.
+
+## Install with cargo
+
+Installing with cargo means installing **two programs**, and cargo can
+only build the first one:
+
+1. **`fluxter`**, the client, written in Rust.
+2. **`fluxter-phone`**, which carries the sound of voice calls, written
+   in Go. Without it you can join a call but you hear nothing and send
+   nothing, and the voice menu says `no sound is being carried`.
+
+You need **Rust 1.85 or newer**, **Go 1.26 or newer** and **git**
+(`cargo --version` and `go version` say which you have). Then run all of
+this:
+
+```bash
+# 1. the client: puts fluxter in ~/.cargo/bin
+cargo install --git https://github.com/AIVirtuoso/fluxter fluxer-tui
+
+# 2. voice calls: builds fluxter-phone into ~/.cargo/bin, next to fluxter
+cd "$(mktemp -d)"
+git clone --depth 1 https://github.com/AIVirtuoso/fluxter
+cd fluxter/phone
+go build -o ~/.cargo/bin/fluxter-phone .
+```
+
+Check that both are installed. This must print two lines, one for each
+program; if it prints only one, the step for the other did not work:
+
+```bash
+command -v fluxter fluxter-phone
+```
+
+For a call to carry sound, **also install `ffmpeg`** from your
+distribution's packages: it records the microphone, and its `ffplay`
+plays the others (`mpv` works for playing too). Sharing your screen
+needs GStreamer (`gst-launch-1.0`) with its PipeWire source and x264
+encoder, and a desktop portal; see "Voice".
+
+**To update**, run both steps again; if cargo says fluxter is already
+installed, add `--force` to the `cargo install` line. **To install a
+branch** instead of master, add `--branch <branch>` to both the
+`cargo install` line and the `git clone` line.
+
+The `fluxer-tui` at the end of the `cargo install` line names the
+package: the repository also holds `scripts/gen-emoji-aliases`, a small
+tool that generates the emoji alias table, and cargo asks which one to
+install otherwise. The console-mode dependencies (drm, swash) are pure
+Rust, so no C libraries have to be installed. A few more tools are
 looked up on PATH at runtime and are optional: `chafa` for text-art
 pictures on a terminal without a graphics protocol, `wl-copy` or `xclip`
 for pasting, and `fc-match` (fontconfig) only when running on a Linux
@@ -281,6 +330,13 @@ A few tools are looked up on PATH at runtime and are optional:
 protocol, `wl-copy` or `xclip` for pasting, and `fc-match`
 (fontconfig) only when running on a Linux virtual console,
 where the UI is drawn through DRM (see `[console]` below).
+
+The package builds `fluxter-phone` too and installs it next to
+`fluxter`, so voice calls carry sound; that needs `go` at build time,
+which `makepkg -s` installs. Its optional dependencies are what a call
+uses at run time: `ffmpeg` for the microphone and playback (or `mpv` for
+playback), and `gst-plugins-ugly`, `gst-plugin-pipewire` and
+`xdg-desktop-portal` for sharing a screen.
 
 ## Trying a branch without a full rebuild
 
@@ -566,7 +622,8 @@ leaves, mutes, deafens, answers, rings and keeps the bookkeeping, and
 hands the URL and token to a program that carries the sound.
 
 That program is **fluxter-phone**, a small Go program in `phone/` that
-ships with the client's Nix package and is on the client's PATH there.
+ships with the client's Nix package (on the client's PATH there) and with
+the Arch PKGBUILD.
 It connects to the room with LiveKit's Go SDK, sends the microphone in
 and plays every other voice, and it does the sound itself in the same
 spirit: **ffmpeg** captures the microphone as Ogg Opus (from pulse, which
@@ -627,8 +684,10 @@ encrypted and decrypted the way the web client does it. The session
 identifies as capable of that whenever a sound program will run, since
 such a channel admits nothing else.
 
-Outside Nix, `cd phone && go build -o fluxter-phone` produces it; put it on
-PATH, or name it in the config. Another program can take its place:
+The Arch PKGBUILD builds and installs it as well. `cargo install`
+cannot, since it is not a Rust crate: "Install with cargo" says how to
+build it with Go and put it on PATH, or name it in the config. Another
+program can take its place:
 
 ```toml
 [media]
